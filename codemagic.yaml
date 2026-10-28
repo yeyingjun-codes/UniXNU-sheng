@@ -16,14 +16,14 @@ workflows:
           git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU.git main
           git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
           cd main
+          # Use the UniXNU main commit contemporary with 16Crow/UniXNU-sheng (2026-10-22), NOT latest
+          # main: the 10-24 main refactor moved scripts into kits and renamed paths, which mismatches
+          # 16Crow's board.toml archives. f5b7c8a is the last main commit before that mismatch.
+          git fetch --depth 1 origin f5b7c8a01e && git checkout f5b7c8a01e
+          git submodule update --init --depth 1
           chmod +x unixnu
-          # fix 1: 16Crow ships an OLD build-arm-driver.py (outputs build/native-aes/) that overrides
-          # the main repo's newer one (build/software-aes/) during tree assembly, which mismatches
-          # build-native-aes-bindings.py (expects build/software-aes/). Use the main repo's version.
-          cp scripts/build-arm-driver.py $CM_BUILD_DIR/device/scripts/build-arm-driver.py
-          # fix 2: ShengUfs is a git component (components.toml) but NOT a submodule and NOT
-          # auto-fetched, so tree/drivers/ShengUfs is empty and archive-07 (NativeUfs) fails.
-          # Clone it into the main checkout; components.resolve() then registers it as a base module.
+          # ShengUfs is a git component (components.toml) but NOT a submodule and NOT auto-fetched,
+          # so tree/drivers/ShengUfs is empty and archive-07 (NativeUfs) fails. Clone it in.
           git clone --depth 1 https://github.com/UniXNU/ShengUfs.git drivers/ShengUfs
           # fix 3: build-boot-progress.py (archive-14) needs tree/uefi-sheng/.../Font.h via -I, but
           # uefi-sheng is not part of tree assembly. Patch the device script to self-clone uefi-sheng.
