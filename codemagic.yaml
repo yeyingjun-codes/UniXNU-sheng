@@ -42,7 +42,18 @@ workflows:
       - name: Build kernel
         script: |
           cd $MAIN_DIR
+          set +e
           python3 ./unixnu build kernel -D $DEVICE_DIR
+          RC=$?
+          set -e
+          echo "=== BUILD KERNEL EXIT: $RC ==="
+          echo "=== software-aes dir ==="
+          ls -la $MAIN_DIR/out/sheng/*/tree/build/software-aes/ 2>/dev/null || echo "NO software-aes dir"
+          echo "=== find NativeAES artifacts ==="
+          find $MAIN_DIR/out -name '*NativeAES*' 2>/dev/null | head -20
+          echo "=== compile log if any ==="
+          find $MAIN_DIR/out -path '*software-aes*' -name 'compile.log' -exec tail -20 {} \; 2>/dev/null
+          exit $RC
     artifacts:
       - main/out/**/kernel/kernel.macho
       - main/out/**/kernel/kernel.json
