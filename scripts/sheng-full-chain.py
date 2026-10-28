@@ -124,9 +124,9 @@ offset = next(at for cmd, at, size in image['commands'] if cmd == 2)
 sy, count, st, _ = struct.unpack_from('<4I', data, offset + 8)
 undefined = []
 for i in range(count):
-    ix, sect, desc, kind, value = struct.unpack_from('<IBBHQ', data, sy + i * 16)
+    ix, ntype, nsect, ndesc, value = struct.unpack_from('<IBBHQ', data, sy + i * 16)
     name = data[st + ix:data.index(b'\0', st + ix)].decode()
-    if kind == 1 and 'IOBlockStorageDevice' in name:
+    if ntype == 1 and 'IOBlockStorageDevice' in name:
         undefined.append(name)
 lines = ['// stage-1 placeholder bindings\n']
 for index, name in enumerate(sorted(set(undefined))):
@@ -143,14 +143,14 @@ print('STAGE1 placeholders:', len(set(undefined)), 'for', canonical)
 
 
 PMGR_STUB_RECIPE = '''#!/usr/bin/env python3
-"""Stage-1 stand-in for build-sheng-platform-power.py: archive sheng_pmgr_run only."""
+"""Stage-1 stand-in for build-sheng-platform-power.py: archive _sheng_pmgr_run."""
 from pathlib import Path
 import subprocess
 ROOT = Path(__file__).resolve().parents[1]
-out = ROOT / 'build/sheng-pmgr-stub'
+out = ROOT / 'build/sheng-platform-power'
 out.mkdir(parents=True, exist_ok=True)
 src = out / 'pmgr_stub.c'
-src.write_text('void sheng_pmgr_run(void) {}\\n')
+src.write_text('void _sheng_pmgr_run(void) {}\\n')
 obj, archive = out / 'pmgr_stub.o', out / 'libShengPlatformPower.a'
 subprocess.run(['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mkernel',
                 '-miphoneos-version-min=17.0', '-Os', '-c', src, '-o', obj], check=True)
@@ -165,6 +165,42 @@ def stage_files():
     (DEVICE / 'scripts/build-sheng-storage-stubs.py').write_text(STUBS_RECIPE)
     (DEVICE / 'scripts/build-sheng-stub-bindings.py').write_text(STUB_BINDER)
     (DEVICE / 'scripts/build-sheng-pmgr-stub.py').write_text(PMGR_STUB_RECIPE)
+    # BootProgress.c uses #include "Font.h" (relative include resolves in the
+    # source directory under DEVICE/kits/sheng). Try multiple sources, fall
+    # # back to fetching from the DarwinBoot submodule on GitHub.
+    font_candidates = [
+        TREE / 'drivers/DarwinBoot/DarwinBootPkg/Driver/Font.h',
+        TREE / 'drivers/DarwinBoot/DarwinBootPkg/Driver/DiagFont.h',
+        TREE / '../uefi-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h',
+        TREE / 'uefi-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h',
+        TREE / '../uefi-sheng-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h',
+    ]
+    font_dst = DEVICE / 'kits/sheng/Font.h'
+    font_dst.parent.mkdir(parents=True, exist_ok=True)
+    copied = False
+    for cand in font_candidates:
+        if cand.is_file():
+            font_dst.write_text(cand.read_text())
+            copied = True
+            print('Font.h copied from ' + str(cand))
+            break
+    if not copied:
+        import urllib.request
+        for url in (
+            'https://raw.githubusercontent.com/UniXNU/DarwinBoot/main/DarwinBootPkg/Driver/Font.h',
+            'https://raw.githubusercontent.com/UniXNU/DarwinBoot/main/DarwinBootPkg/Driver/DiagFont.h',
+        ):
+            try:
+                req = urllib.request.Request(url)
+                req.add_header('User-Agent', 'unixnu-port')
+                font_dst.write_bytes(urllib.request.urlopen(req, timeout=30).read())
+                print('Font.h fetched from ' + url)
+                copied = True
+                break
+            except Exception:
+                continue
+    if not copied:
+        print('WARNING: Font.h not found, BootProgress will fail')
     import urllib.request
     url = 'https://raw.githubusercontent.com/xVanTuring/UniXNU-qemu/main/scripts/build-owner-systemos-policy.py'
     req = urllib.request.Request(url)
@@ -329,12 +365,6 @@ def disable_verified():
 
 
 def main():
-    # Guard: some runners have a flaky xcodebuild; don't let it kill the chain
-    import subprocess as _sp
-    try:
-        _sp.run(["xcodebuild", "-version"], capture_output=True, timeout=15)
-    except Exception:
-        pass
     stage_files()
     run('./unixnu', 'fetch')
     run('./unixnu', 'ipsw', 'fetch')
