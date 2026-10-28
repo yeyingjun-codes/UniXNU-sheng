@@ -1,42 +1,73 @@
 workflows:
   xnu-kernel:
     name: Build XNU kernel for sheng
-    max_build_duration: 60
+    max_build_duration: 120
     instance_type: mac_mini_m2
     environment:
       xcode: latest
       vars:
+        MAIN_REPO: https://github.com/UniXNU/UniXNU.git
         DEVICE_REPO: https://github.com/16Crow/UniXNU-sheng.git
+        DEFCONFIG: sheng_defconfig
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
-      - name: Setup environment
+      - name: Report toolchain
         script: |
           set -e
-          chmod +x unixnu
-          git --version
-          python3 --version
-          clang --version
+          sw_vers
+          uname -m
           xcodebuild -version || true
+          xcrun --sdk iphoneos --show-sdk-version || true
+          python3 --version
           df -h .
-      - name: Clone device repo
+      - name: Install host tools
         script: |
-          rm -rf device
-          git clone --depth 1 $DEVICE_REPO device
+          set -e
+          brew install llvm lld mtools dtc
+          if ! command -v unifdef >/dev/null; then brew install unifdef; fi
+      - name: Clone official repositories
+        script: |
+          set -e
+          rm -rf build
+          mkdir -p build
+          cd build
+          git clone --depth 1 "$MAIN_REPO" UniXNU
+          cd UniXNU
+          git clone --depth 1 "$DEVICE_REPO" device
+          echo "--- device contents ---"
           ls device/
-      - name: Fetch feeds and IPSW
+          test -f device/board.toml
+          test -f device/configs/$DEFCONFIG
+      - name: defconfig + fetch sources + IPSW
         script: |
+          set -e
+          cd build/UniXNU
+          chmod +x ./unixnu
+          export UNIXNU_DEVICE="$PWD/device"
+          export GITHUB_TOKEN="${GH_TOKEN:-}"
+          python3 ./unixnu defconfig "$DEFCONFIG" -D device
           python3 ./unixnu fetch
           python3 ./unixnu ipsw fetch
-      - name: Defconfig
-        script: |
-          python3 ./unixnu defconfig sheng_defconfig -D device
       - name: Build kernel
         script: |
-          python3 ./unixnu build kernel -j 8
-      - name: Collect artifacts
+          set -e
+          cd build/UniXNU
+          export UNIXNU_DEVICE="$PWD/device"
+          export GITHUB_TOKEN="${GH_TOKEN:-}"
+          python3 ./unixnu build kernel
+      - name: Locate kernel artifacts
         script: |
-          find out -name "kernel.macho" -o -name "kernel.json" 2>/dev/null | head -5
-          find build -name "*.a" 2>/dev/null | head -5
+          set -e
+          cd build/UniXNU
+          echo "=== kernel.macho ==="
+          find out -name "kernel.macho" -print
+          echo "=== kernel.json ==="
+          find out -name "kernel.json" -print
+          echo "=== sizes ==="
+          find out -name "kernel.macho" -exec ls -lh {} \;
     artifacts:
-      - out/**/kernel.macho
-      - out/**/kernel.json
-      - build/**/*.a
+      - build/UniXNU/out/**/kernel.macho
+      - build/UniXNU/out/**/kernel.json
+      - build/UniXNU/build/**/*.a
