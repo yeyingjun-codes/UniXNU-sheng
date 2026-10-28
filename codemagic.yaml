@@ -1,17 +1,19 @@
 workflows:
   xnu-kernel:
     name: Build XNU kernel for sheng
-    max_build_duration: 45
+    max_build_duration: 60
+    instance_type: mac_mini_m2
     environment:
-      macos: 15
       xcode: latest
       vars:
-        DEVICE_REPO: yeyingjun-codes/UniXNU-sheng
-        DEFCONFIG: sheng_defconfig
+        DEVICE_REPO: https://github.com/16Crow/UniXNU-sheng.git
     scripts:
-      - name: Fetch dependencies
+      - name: Clone device repo
         script: |
-          git submodule update --init --recursive
+          rm -rf device
+          git clone --depth 1 $DEVICE_REPO device
+      - name: Fetch feeds and IPSW
+        script: |
           ./unixnu fetch
           ./unixnu ipsw fetch
       - name: Defconfig
@@ -22,12 +24,5 @@ workflows:
           ./unixnu build kernel -j 8
     artifacts:
       - out/**/kernel.macho
-      - out/**/payload.img
-      - out/**/logs/*.log
-    publishing:
-      email:
-        recipients:
-          - 2933322618@qq.com
-        notify:
-          success: true
-          failure: true
+      - out/**/kernel.json
+      - build/**/*.a
