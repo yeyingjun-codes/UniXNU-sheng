@@ -161,6 +161,14 @@ print(archive)
 
 
 def stage_files():
+    # Prevent recursive submodule update in fetch (20+ submodules timeout on runners)
+    import re
+    feeds_py = TREE / 'scripts/unixnu/feeds.py'
+    if feeds_py.is_file():
+        text = feeds_py.read_text()
+        text = text.replace('git submodule update --init --recursive', 'git submodule update --init --depth 1')
+        feeds_py.write_text(text)
+        print('patched feeds.py for shallow submodule fetch')
     (DEVICE / 'package/ShengStorageStubs.c').write_text(STUB_C)
     (DEVICE / 'scripts/build-sheng-storage-stubs.py').write_text(STUBS_RECIPE)
     (DEVICE / 'scripts/build-sheng-stub-bindings.py').write_text(STUB_BINDER)
