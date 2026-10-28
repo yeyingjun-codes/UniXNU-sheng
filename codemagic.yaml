@@ -28,8 +28,7 @@ workflows:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           for tool in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc xcodebuild; do
-            printf '%-10s %s
-' "$tool" "$(command -v "$tool" || echo MISSING)"
+            echo "$tool = $(command -v "$tool" || echo MISSING)"
           done
       - name: Fetch sources and IPSW
         script: |
