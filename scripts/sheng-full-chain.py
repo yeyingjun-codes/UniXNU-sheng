@@ -77,19 +77,23 @@ STUB int native_verified_root_probe(void) { return 0; }
 '''
 
 STUBS_RECIPE = '''#!/usr/bin/env python3
+"""Archive the stage weak storage/owner/display hooks for the kernel link."""
 from pathlib import Path
 import subprocess
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / 'package/ShengStorageStubs.c'
+if not SOURCE.is_file():
+    SOURCE.write_text(r"""%s""")
 out = ROOT / 'build/sheng-storage-stubs'
 out.mkdir(parents=True, exist_ok=True)
 obj, archive = out / 'ShengStorageStubs.o', out / 'libShengStorageStubs.a'
 subprocess.run(['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mkernel',
                 '-miphoneos-version-min=17.0', '-Os', '-Wall', '-Werror',
-                '-c', str(ROOT / 'package/ShengStorageStubs.c'), '-o', obj], check=True)
+                '-c', str(SOURCE), '-o', obj], check=True)
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, obj], check=True)
 print(archive)
-'''
+''' % STUB_C.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
 
 STUB_BINDER = r'''#!/usr/bin/env python3
 """Stage-1 placeholder original-class bindings (no qualification)."""
