@@ -150,7 +150,7 @@ ROOT = Path(__file__).resolve().parents[1]
 out = ROOT / 'build/sheng-platform-power'
 out.mkdir(parents=True, exist_ok=True)
 src = out / 'pmgr_stub.c'
-src.write_text('void _sheng_pmgr_run(void) {}\\n')
+src.write_text('void sheng_pmgr_run(void) {}\\n')
 obj, archive = out / 'pmgr_stub.o', out / 'libShengPlatformPower.a'
 subprocess.run(['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mkernel',
                 '-miphoneos-version-min=17.0', '-Os', '-c', src, '-o', obj], check=True)
@@ -175,8 +175,7 @@ def stage_files():
         TREE / 'uefi-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h',
         TREE / '../uefi-sheng-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h',
     ]
-    font_dst = DEVICE / 'kits/sheng/Font.h'
-    font_dst.parent.mkdir(parents=True, exist_ok=True)
+    font_dst = DEVICE / 'package/Font.h'
     copied = False
     for cand in font_candidates:
         if cand.is_file():
