@@ -17,6 +17,10 @@ workflows:
           git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
           cd main
           chmod +x unixnu
+          # 16Crow ships an OLD build-arm-driver.py (outputs build/native-aes/) that overrides
+          # the main repo's newer one (build/software-aes/) during tree assembly, which mismatches
+          # build-native-aes-bindings.py (expects build/software-aes/). Use the main repo's version.
+          cp scripts/build-arm-driver.py $CM_BUILD_DIR/device/scripts/build-arm-driver.py
           echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
           echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
       - name: Install host tools
