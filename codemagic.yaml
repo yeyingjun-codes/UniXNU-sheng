@@ -8,20 +8,34 @@ workflows:
       vars:
         DEVICE_REPO: https://github.com/16Crow/UniXNU-sheng.git
     scripts:
+      - name: Setup environment
+        script: |
+          set -e
+          chmod +x unixnu
+          git --version
+          python3 --version
+          clang --version
+          xcodebuild -version || true
+          df -h .
       - name: Clone device repo
         script: |
           rm -rf device
           git clone --depth 1 $DEVICE_REPO device
+          ls device/
       - name: Fetch feeds and IPSW
         script: |
-          ./unixnu fetch
-          ./unixnu ipsw fetch
+          python3 ./unixnu fetch
+          python3 ./unixnu ipsw fetch
       - name: Defconfig
         script: |
-          ./unixnu defconfig sheng_defconfig -D device
+          python3 ./unixnu defconfig sheng_defconfig -D device
       - name: Build kernel
         script: |
-          ./unixnu build kernel -j 8
+          python3 ./unixnu build kernel -j 8
+      - name: Collect artifacts
+        script: |
+          find out -name "kernel.macho" -o -name "kernel.json" 2>/dev/null | head -5
+          find build -name "*.a" 2>/dev/null | head -5
     artifacts:
       - out/**/kernel.macho
       - out/**/kernel.json
