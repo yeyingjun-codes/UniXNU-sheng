@@ -9,7 +9,7 @@ workflows:
         - github
       vars:
         MAIN_REPO: https://github.com/UniXNU/UniXNU.git
-        DEVICE_REPO: https://github.com/16Crow/UniXNU-sheng.git
+        DEVICE_REPO: https://github.com/UniXNU/UniXNU-sheng.git
         DEFCONFIG: sheng_defconfig
         HOMEBREW_NO_AUTO_UPDATE: "1"
         HOMEBREW_NO_INSTALL_CLEANUP: "1"
