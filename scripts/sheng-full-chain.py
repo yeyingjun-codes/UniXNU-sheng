@@ -333,15 +333,6 @@ def main():
     run('./unixnu', 'fetch')
     run('./unixnu', 'ipsw', 'fetch')
     w = work()
-    # the platform-power audit globs native-owner-ufs-*-candidate.macho for its reference
-    prelink_dir = TREE / 'build/xnu-prelink'
-    prelink_dir.mkdir(parents=True, exist_ok=True)
-    apfs = BUILD / 'native-prelink/native-apfs-load-positive.macho'
-    if apfs.is_file():
-        for name in ('native-owner-ufs-cpu-desktop-sheng-candidate.macho',):
-            link = prelink_dir / name
-            if not link.exists():
-                link.symlink_to(apfs)
     full = official_archives()
     reduced = ['build-sheng-storage-stubs.py']
     for e in full:
