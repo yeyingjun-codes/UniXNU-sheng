@@ -329,6 +329,12 @@ def disable_verified():
 
 
 def main():
+    # Guard: some runners have a flaky xcodebuild; don't let it kill the chain
+    import subprocess as _sp
+    try:
+        _sp.run(["xcodebuild", "-version"], capture_output=True, timeout=15)
+    except Exception:
+        pass
     stage_files()
     run('./unixnu', 'fetch')
     run('./unixnu', 'ipsw', 'fetch')
