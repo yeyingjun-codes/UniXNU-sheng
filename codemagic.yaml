@@ -5,6 +5,8 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
+      groups:
+        - github
       vars:
         MAIN_REPO: https://github.com/UniXNU/UniXNU.git
         DEVICE_REPO: https://github.com/16Crow/UniXNU-sheng.git
