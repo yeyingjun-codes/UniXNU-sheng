@@ -42,18 +42,16 @@ workflows:
       - name: Diagnose NativeAES paths
         script: |
           cd $MAIN_DIR
+          python3 ./unixnu tree -D $DEVICE_DIR 2>&1 | tail -2 || true
+          TREE=$MAIN_DIR/out/sheng/tree
           echo "=== UniXNU commit ==="
           git -C $MAIN_DIR rev-parse HEAD
-          echo "=== build-native-aes-bindings.py help ==="
-          find $MAIN_DIR/out -name 'build-native-aes-bindings.py' 2>/dev/null | head -1
-          NAES=$(find $MAIN_DIR/out -name 'build-native-aes-bindings.py' 2>/dev/null | head -1)
-          if [ -n "$NAES" ]; then python3 "$NAES" --help 2>&1 | head -15; fi
-          echo "=== components.toml NativeAES ==="
-          CT=$(find $MAIN_DIR/out -name 'components.toml' 2>/dev/null | head -1)
-          echo "components.toml at: $CT"
-          grep -A6 'SoftwareAES\|NativeAES' "$CT" 2>/dev/null | head -20
+          echo "=== build-native-aes-bindings.py --help ==="
+          python3 $TREE/scripts/build-native-aes-bindings.py --help 2>&1 | head -12 || echo "NO FILE"
+          echo "=== components.toml NativeAES/SoftwareAES ==="
+          grep -B1 -A8 'SoftwareAES\|native-aes' $TREE/components.toml 2>/dev/null | head -25
           echo "=== build-arm-driver.py aux_dirs ==="
-          grep -n 'aux_dirs\|native-aes\|software-aes' $MAIN_DIR/scripts/build-arm-driver.py 2>/dev/null | head
+          grep -n 'aux_dirs\|native-aes' $TREE/scripts/build-arm-driver.py 2>/dev/null | head
       - name: Build kernel
         script: |
           cd $MAIN_DIR
