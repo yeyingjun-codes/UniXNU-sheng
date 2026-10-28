@@ -5,10 +5,13 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
+      groups:
+        - github
     scripts:
       - name: Clone repos
         script: |
           set -e
+          echo "GITHUB_TOKEN=$GH_TOKEN" >> $CM_ENV
           cd $CM_BUILD_DIR
           git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU.git main
           git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
