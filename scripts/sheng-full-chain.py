@@ -142,10 +142,29 @@ print('STAGE1 placeholders:', len(set(undefined)), 'for', canonical)
 '''
 
 
+PMGR_STUB_RECIPE = '''#!/usr/bin/env python3
+"""Stage-1 stand-in for build-sheng-platform-power.py: archive sheng_pmgr_run only."""
+from pathlib import Path
+import subprocess
+ROOT = Path(__file__).resolve().parents[1]
+out = ROOT / 'build/sheng-pmgr-stub'
+out.mkdir(parents=True, exist_ok=True)
+src = out / 'pmgr_stub.c'
+src.write_text('void sheng_pmgr_run(void) {}\\n')
+obj, archive = out / 'pmgr_stub.o', out / 'libShengPlatformPower.a'
+subprocess.run(['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mkernel',
+                '-miphoneos-version-min=17.0', '-Os', '-c', src, '-o', obj], check=True)
+archive.unlink(missing_ok=True)
+subprocess.run(['xcrun', 'ar', 'rcs', archive, obj], check=True)
+print(archive)
+'''
+
+
 def stage_files():
     (DEVICE / 'package/ShengStorageStubs.c').write_text(STUB_C)
     (DEVICE / 'scripts/build-sheng-storage-stubs.py').write_text(STUBS_RECIPE)
     (DEVICE / 'scripts/build-sheng-stub-bindings.py').write_text(STUB_BINDER)
+    (DEVICE / 'scripts/build-sheng-pmgr-stub.py').write_text(PMGR_STUB_RECIPE)
     import urllib.request
     url = 'https://raw.githubusercontent.com/xVanTuring/UniXNU-qemu/main/scripts/build-owner-systemos-policy.py'
     req = urllib.request.Request(url)
@@ -314,11 +333,25 @@ def main():
     run('./unixnu', 'fetch')
     run('./unixnu', 'ipsw', 'fetch')
     w = work()
+    # the platform-power audit globs native-owner-ufs-*-candidate.macho for its reference
+    prelink_dir = TREE / 'build/xnu-prelink'
+    prelink_dir.mkdir(parents=True, exist_ok=True)
+    apfs = BUILD / 'native-prelink/native-apfs-load-positive.macho'
+    if apfs.is_file():
+        for name in ('native-owner-ufs-cpu-desktop-sheng-candidate.macho',):
+            link = prelink_dir / name
+            if not link.exists():
+                link.symlink_to(apfs)
     full = official_archives()
     reduced = ['build-sheng-storage-stubs.py']
     for e in full:
         if 'build-virtio-mmio-bindings' in e:
             reduced.append(e.replace('build-virtio-mmio-bindings.py', 'build-sheng-stub-bindings.py', 1))
+        elif e.startswith('build-sheng-platform-power.py'):
+            # stage-1: the pmgr audit needs a reference candidate that only exists
+            # after the first link; stub the hook here, build the real instrument
+            # in stage 2
+            reduced.append('build-sheng-pmgr-stub.py')
         else:
             reduced.append(e)
     toml_archives(reduced)
