@@ -181,7 +181,7 @@ git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 ref = "IOStorageFamily-315"
 commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
 '''
-        feeds.write_text(text)
+    feeds.write_text(text)
 
 
 def ipsw_path():
@@ -332,7 +332,8 @@ def main():
     stage_files()
     run('./unixnu', 'fetch')
     run('./unixnu', 'ipsw', 'fetch')
-    w = work()
+    # defconfig must run before work() can find the configured output dir
+    run('./unixnu', 'defconfig', 'sheng_defconfig', '-D', str(DEVICE))
     full = official_archives()
     reduced = ['build-sheng-storage-stubs.py']
     for e in full:
@@ -351,6 +352,7 @@ def main():
         return 1
     toml_archives(full)
     print('stage-1 kernel linked', flush=True)
+    w = work()
     if not qualify(w):
         print('QUALIFICATION FAILED', flush=True)
         return 1
