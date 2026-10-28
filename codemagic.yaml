@@ -27,8 +27,10 @@ workflows:
       - name: Install host tools
         script: |
           set -e
-          brew install llvm lld mtools dtc
+          brew install llvm lld mtools dtc cmake ninja
           if ! command -v unifdef >/dev/null; then brew install unifdef; fi
+          command -v ninja && ninja --version
+          command -v cmake && cmake --version | head -1
       - name: Clone official repositories
         script: |
           set -e
