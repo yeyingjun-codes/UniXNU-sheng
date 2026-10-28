@@ -5,73 +5,43 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
-      groups:
-        - github
-      vars:
-        MAIN_REPO: https://github.com/UniXNU/UniXNU.git
-        DEVICE_REPO: https://github.com/UniXNU/UniXNU-sheng.git
-        DEFCONFIG: sheng_defconfig
-        HOMEBREW_NO_AUTO_UPDATE: "1"
-        HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
-      - name: Report toolchain
+      - name: Clone repos
         script: |
           set -e
-          sw_vers
-          uname -m
-          xcodebuild -version || true
-          xcrun --sdk iphoneos --show-sdk-version || true
-          python3 --version
-          df -h .
+          cd $CM_BUILD_DIR
+          git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU.git main
+          git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
+          cd main
+          chmod +x unixnu
+          echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
+          echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
       - name: Install host tools
         script: |
-          set -e
-          brew install llvm lld mtools dtc cmake ninja
-          if ! command -v unifdef >/dev/null; then brew install unifdef; fi
-          command -v ninja && ninja --version
-          command -v cmake && cmake --version | head -1
-      - name: Clone official repositories
+          cd $MAIN_DIR
+          brew install cmake ninja unifdef llvm mtools dtc lld
+          echo "PATH=$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" >> $CM_ENV
+      - name: Verify tools
         script: |
-          set -e
-          rm -rf build
-          mkdir -p build
-          cd build
-          git clone --depth 1 "$MAIN_REPO" UniXNU
-          cd UniXNU
-          git clone --depth 1 "$DEVICE_REPO" device
-          echo "--- device contents ---"
-          ls device/
-          test -f device/board.toml
-          test -f device/configs/$DEFCONFIG
-      - name: defconfig + fetch sources + IPSW
+          cd $MAIN_DIR
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          for tool in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc xcodebuild; do
+            printf '%-10s %s
+' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+      - name: Fetch sources and IPSW
         script: |
-          set -e
-          cd build/UniXNU
-          chmod +x ./unixnu
-          export UNIXNU_DEVICE="$PWD/device"
-          export GITHUB_TOKEN="${GH_TOKEN:-}"
-          python3 ./unixnu defconfig "$DEFCONFIG" -D device
-          python3 ./unixnu fetch
-          python3 ./unixnu ipsw fetch
+          cd $MAIN_DIR
+          python3 ./unixnu defconfig sheng_defconfig -D $DEVICE_DIR
+          python3 ./unixnu fetch -D $DEVICE_DIR
+          python3 ./unixnu ipsw fetch -D $DEVICE_DIR
       - name: Build kernel
         script: |
-          set -e
-          cd build/UniXNU
-          export UNIXNU_DEVICE="$PWD/device"
-          export GITHUB_TOKEN="${GH_TOKEN:-}"
-          python3 ./unixnu build kernel
-      - name: Locate kernel artifacts
-        script: |
-          set -e
-          cd build/UniXNU
-          echo "=== kernel.macho ==="
-          find out -name "kernel.macho" -print
-          echo "=== kernel.json ==="
-          find out -name "kernel.json" -print
-          echo "=== sizes ==="
-          find out -name "kernel.macho" -exec ls -lh {} \;
+          cd $MAIN_DIR
+          python3 ./unixnu build kernel -D $DEVICE_DIR
     artifacts:
-      - build/UniXNU/out/**/kernel.macho
-      - build/UniXNU/out/**/kernel.json
-      - build/UniXNU/build/**/*.a
+      - main/out/**/kernel/kernel.macho
+      - main/out/**/kernel/kernel.json
+      - main/out/**/logs/*.log
