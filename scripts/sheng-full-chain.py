@@ -63,6 +63,7 @@ typedef int dev_t;
 #define STUB __attribute__((weak))
 STUB void sheng_pmgr_run(void) {}
 STUB void native_legacy_display_probe(void) {}
+STUB void native_legacy_display_late_probe(void) {}
 STUB void native_mobile_graphics_client_probe(void) {}
 STUB int native_ram_block_gpu_addon(void) { return 0; }
 STUB int native_ram_block_volume_seed(const char *a, dev_t *b, char *c, unsigned long d,
@@ -74,6 +75,10 @@ STUB int native_verified_block_root_authorized(dev_t a) { (void)a; return 0; }
 STUB int native_verified_block_volume_device(const char *a, dev_t *b, char *c, unsigned long d)
 { (void)a;(void)b;(void)c;(void)d; return 0; }
 STUB int native_verified_root_probe(void) { return 0; }
+/* mockfs root, needed by CONFIG_XNU_SOURCE_MOCKFS=y when the mockfs archive is not linked */
+STUB int mockfs_mountroot(void) { return 0; }
+STUB void *mockfs_vfsops = 0;
+STUB void *mockfs_vnodeop_opv_desc = 0;
 '''
 
 STUBS_RECIPE = '''#!/usr/bin/env python3
@@ -119,7 +124,7 @@ offset = next(at for cmd, at, size in image['commands'] if cmd == 2)
 sy, count, st, _ = struct.unpack_from('<4I', data, offset + 8)
 undefined = []
 for i in range(count):
-    ix, kind, _, value = struct.unpack_from('<IBBHQ', data, sy + i * 16)
+    ix, sect, desc, kind, value = struct.unpack_from('<IBBHQ', data, sy + i * 16)
     name = data[st + ix:data.index(b'\0', st + ix)].decode()
     if kind == 1 and 'IOBlockStorageDevice' in name:
         undefined.append(name)
