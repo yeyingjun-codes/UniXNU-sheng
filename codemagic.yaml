@@ -17,10 +17,17 @@ workflows:
           git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
           cd main
           chmod +x unixnu
-          # 16Crow ships an OLD build-arm-driver.py (outputs build/native-aes/) that overrides
+          # fix 1: 16Crow ships an OLD build-arm-driver.py (outputs build/native-aes/) that overrides
           # the main repo's newer one (build/software-aes/) during tree assembly, which mismatches
           # build-native-aes-bindings.py (expects build/software-aes/). Use the main repo's version.
           cp scripts/build-arm-driver.py $CM_BUILD_DIR/device/scripts/build-arm-driver.py
+          # fix 2: ShengUfs is a git component (components.toml) but NOT a submodule and NOT
+          # auto-fetched, so tree/drivers/ShengUfs is empty and archive-07 (NativeUfs) fails.
+          # Clone it into the main checkout; components.resolve() then registers it as a base module.
+          git clone --depth 1 https://github.com/UniXNU/ShengUfs.git drivers/ShengUfs
+          # fix 3: build-boot-progress.py (archive-14) needs tree/uefi-sheng/.../Font.h via -I, but
+          # uefi-sheng is not part of tree assembly. Patch the device script to self-clone uefi-sheng.
+          echo aW1wb3J0IHN5cywgc3VicHJvY2VzcwpwID0gc3lzLmFyZ3ZbMV0KcyA9IG9wZW4ocCkucmVhZCgpCmFuY2hvciA9ICJPVVQubWtkaXIocGFyZW50cz1UcnVlLCBleGlzdF9vaz1UcnVlKSIKaW5qZWN0ID0gYW5jaG9yICsgIlxuX3VlZmkgPSBST09UIC8gJ3VlZmktc2hlbmcnXG5pZiBub3QgX3VlZmkuZXhpc3RzKCk6XG4gICAgc3VicHJvY2Vzcy5ydW4oWydnaXQnLCdjbG9uZScsJy0tZGVwdGgnLCcxJywnaHR0cHM6Ly9naXRodWIuY29tL1VuaVhOVS91ZWZpLXNoZW5nLmdpdCcsc3RyKF91ZWZpKV0sY2hlY2s9VHJ1ZSlcbiIKaWYgYW5jaG9yIGluIHMgYW5kICd1ZWZpLXNoZW5nLmdpdCcgbm90IGluIHM6CiAgICBzID0gcy5yZXBsYWNlKGFuY2hvciwgaW5qZWN0LCAxKQogICAgb3BlbihwLCd3Jykud3JpdGUocykKICAgIHByaW50KCdwYXRjaGVkIGJ1aWxkLWJvb3QtcHJvZ3Jlc3MucHknKQo= | base64 -d > /tmp/patch_bp.py && python3 /tmp/patch_bp.py "$CM_BUILD_DIR/device/scripts/build-boot-progress.py"
           echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
           echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
       - name: Install host tools
