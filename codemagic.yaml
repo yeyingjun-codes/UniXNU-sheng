@@ -26,6 +26,25 @@ workflows:
           echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
           echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
           echo "STEPS=kernel" >> $CM_ENV
+      - name: Apply UFS poll cap patch
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('device/drivers/ShengUfs/TransferPoll.h')
+          text = p.read_text()
+          old = '    ++state.polls;\n'
+          new = ('    ++state.polls;\n'
+                 '    // Bounded poll count: if mach_absolute_time() stops (clock not ready in early\n'
+                 '    // bsd_init), the deadline never fires. Cap the spins so a stuck transfer\n'
+                 '    // reports Timeout instead of hanging the kernel forever.\n'
+                 '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
+          if '1000000U' not in text:
+              assert old in text, 'poll loop anchor not found'
+              text = text.replace(old, new, 1)
+              p.write_text(text)
+          print('UFS poll cap applied')
+          PY
       - name: Install host tools
         script: |
           set -e
