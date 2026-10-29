@@ -31,19 +31,22 @@ workflows:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('device/drivers/ShengUfs/TransferPoll.h')
-          text = p.read_text()
-          old = '    ++state.polls;\n'
-          new = ('    ++state.polls;\n'
-                 '    // Bounded poll count: if mach_absolute_time() stops (clock not ready in early\n'
-                 '    // bsd_init), the deadline never fires. Cap the spins so a stuck transfer\n'
-                 '    // reports Timeout instead of hanging the kernel forever.\n'
-                 '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
-          if '1000000U' not in text:
-              assert old in text, 'poll loop anchor not found'
-              text = text.replace(old, new, 1)
-              p.write_text(text)
-          print('UFS poll cap applied')
+          for cand in ('main/drivers/NativeUfs/TransferPoll.h', 'device/drivers/ShengUfs/TransferPoll.h'):
+              p = Path(cand)
+              if p.exists():
+                  text = p.read_text()
+                  old = '    ++state.polls;\n'
+                  new = ('    ++state.polls;\n'
+                         '    // Bounded poll count: if mach_absolute_time() stops (clock not ready in early\n'
+                         '    // bsd_init), the deadline never fires. Cap the spins so a stuck transfer\n'
+                         '    // reports Timeout instead of hanging the kernel forever.\n'
+                         '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
+                  if '1000000U' not in text:
+                      assert old in text, 'poll loop anchor not found in ' + cand
+                      p.write_text(text.replace(old, new, 1))
+                  print('poll cap present in', cand)
+                  raise SystemExit(0)
+          raise SystemExit('TransferPoll.h not found in any expected location')
           PY
       - name: Install host tools
         script: |
