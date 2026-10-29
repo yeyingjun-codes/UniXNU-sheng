@@ -18,7 +18,7 @@ workflows:
           echo "GITHUB_TOKEN=$GH_TOKEN" >> $CM_ENV
           cd $CM_BUILD_DIR
           git clone --depth 1 --recurse-submodules --branch sheng-evidence https://github.com/16Crow/UniXNU-official-build.git main
-          git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU-sheng.git device
+          git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
           cd main
           chmod +x unixnu
           echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
@@ -48,6 +48,7 @@ workflows:
           ./unixnu defconfig "$DEFCONFIG"
       - name: Prepare evidence and build kernel
         script: |
+          set -euo pipefail
           cd $MAIN_DIR
           export GITHUB_TOKEN=$GH_TOKEN
           export UNIXNU_DEVICE=$DEVICE_DIR
@@ -55,9 +56,9 @@ workflows:
           export DEFCONFIG=sheng_defconfig
           bash scripts/prepare-sheng-evidence.sh
           echo "=== PIPELINE DONE ==="
-          ls -lh out/sheng/kernel/ || true
-          shasum -a 256 out/sheng/kernel/kernel.macho || true
-          shasum -a 256 out/sheng/kernel/kernel.json || true
+          ls -lh out/sheng/kernel/
+          shasum -a 256 out/sheng/kernel/kernel.macho
+          shasum -a 256 out/sheng/kernel/kernel.json
     artifacts:
       - main/out/sheng/kernel/kernel.macho
       - main/out/sheng/kernel/kernel.json
