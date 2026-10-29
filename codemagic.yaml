@@ -1,39 +1,35 @@
 workflows:
-  xnu-kernel:
-    name: Build XNU kernel for sheng
-    max_build_duration: 120
+  sheng-kernel:
+    name: Build sheng kernel (16Crow official evidence pipeline)
+    max_build_duration: 180
     instance_type: mac_mini_m2
     environment:
       xcode: latest
       groups:
         - github
+      vars:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
       - name: Clone repos
         script: |
           set -e
           echo "GITHUB_TOKEN=$GH_TOKEN" >> $CM_ENV
           cd $CM_BUILD_DIR
-          git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU.git main
-          git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
+          git clone --depth 1 --recurse-submodules --branch sheng-evidence https://github.com/16Crow/UniXNU-official-build.git main
+          git clone --depth 1 --recurse-submodules https://github.com/UniXNU/UniXNU-sheng.git device
           cd main
-          # Use the UniXNU main commit contemporary with 16Crow/UniXNU-sheng (2026-10-22), NOT latest
-          # main: the 10-24 main refactor moved scripts into kits and renamed paths, which mismatches
-          # 16Crow's board.toml archives. f5b7c8a is the last main commit before that mismatch.
-          git fetch --depth 1 origin f5b7c8a01e && git checkout f5b7c8a01e
-          git submodule update --init --depth 1
           chmod +x unixnu
-          # ShengUfs is a git component (components.toml) but NOT a submodule and NOT auto-fetched,
-          # so tree/drivers/ShengUfs is empty and archive-07 (NativeUfs) fails. Clone it in.
-          git clone --depth 1 https://github.com/UniXNU/ShengUfs.git drivers/ShengUfs
-          # fix 3: build-boot-progress.py (archive-14) needs tree/uefi-sheng/.../Font.h via -I, but
-          # uefi-sheng is not part of tree assembly. Patch the device script to self-clone uefi-sheng.
-          echo aW1wb3J0IHN5cywgc3VicHJvY2VzcwpwID0gc3lzLmFyZ3ZbMV0KcyA9IG9wZW4ocCkucmVhZCgpCmFuY2hvciA9ICJPVVQubWtkaXIocGFyZW50cz1UcnVlLCBleGlzdF9vaz1UcnVlKSIKaW5qZWN0ID0gYW5jaG9yICsgIlxuX3VlZmkgPSBST09UIC8gJ3VlZmktc2hlbmcnXG5pZiBub3QgX3VlZmkuZXhpc3RzKCk6XG4gICAgc3VicHJvY2Vzcy5ydW4oWydnaXQnLCdjbG9uZScsJy0tZGVwdGgnLCcxJywnaHR0cHM6Ly9naXRodWIuY29tL1VuaVhOVS91ZWZpLXNoZW5nLmdpdCcsc3RyKF91ZWZpKV0sY2hlY2s9VHJ1ZSlcbiIKaWYgYW5jaG9yIGluIHMgYW5kICd1ZWZpLXNoZW5nLmdpdCcgbm90IGluIHM6CiAgICBzID0gcy5yZXBsYWNlKGFuY2hvciwgaW5qZWN0LCAxKQogICAgb3BlbihwLCd3Jykud3JpdGUocykKICAgIHByaW50KCdwYXRjaGVkIGJ1aWxkLWJvb3QtcHJvZ3Jlc3MucHknKQo= | base64 -d > /tmp/patch_bp.py && python3 /tmp/patch_bp.py "$CM_BUILD_DIR/device/scripts/build-boot-progress.py"
           echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
           echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
+          echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
+          echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
+          echo "STEPS=kernel" >> $CM_ENV
       - name: Install host tools
         script: |
-          cd $MAIN_DIR
-          brew install cmake ninja unifdef llvm mtools dtc lld
+          set -e
+          brew install llvm lld mtools dtc qemu unifdef cmake ninja
           echo "PATH=$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" >> $CM_ENV
       - name: Verify tools
         script: |
@@ -41,44 +37,28 @@ workflows:
           sw_vers
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          for tool in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc xcodebuild; do
-            echo "$tool = $(command -v "$tool" || echo MISSING)"
+          for t in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc qemu-system-aarch64 shasum; do
+            echo "$t=$(command -v $t || echo MISSING)"
           done
-      - name: Fetch sources and IPSW
+          echo "UNIXNU_DEVICE=$UNIXNU_DEVICE"
+          echo "DEFCONFIG=$DEFCONFIG"
+      - name: Select device
         script: |
           cd $MAIN_DIR
-          python3 ./unixnu defconfig sheng_defconfig -D $DEVICE_DIR
-          python3 ./unixnu fetch -D $DEVICE_DIR
-          python3 ./unixnu ipsw fetch -D $DEVICE_DIR
-      - name: Diagnose NativeAES paths
+          ./unixnu defconfig "$DEFCONFIG"
+      - name: Prepare evidence and build kernel
         script: |
           cd $MAIN_DIR
-          python3 ./unixnu tree -D $DEVICE_DIR 2>&1 | tail -2 || true
-          TREE=$MAIN_DIR/out/sheng/tree
-          echo "=== UniXNU commit ==="
-          git -C $MAIN_DIR rev-parse HEAD
-          echo "=== build-native-aes-bindings.py --help ==="
-          python3 $TREE/scripts/build-native-aes-bindings.py --help 2>&1 | head -12 || echo "NO FILE"
-          echo "=== components.toml NativeAES/SoftwareAES ==="
-          grep -B1 -A8 'SoftwareAES\|native-aes' $TREE/components.toml 2>/dev/null | head -25
-          echo "=== build-arm-driver.py aux_dirs ==="
-          grep -n 'aux_dirs\|native-aes' $TREE/scripts/build-arm-driver.py 2>/dev/null | head
-      - name: Build kernel
-        script: |
-          cd $MAIN_DIR
-          set +e
-          python3 ./unixnu build kernel -D $DEVICE_DIR
-          RC=$?
-          set -e
-          echo "=== BUILD KERNEL EXIT: $RC ==="
-          echo "=== software-aes dir ==="
-          ls -la $MAIN_DIR/out/sheng/*/tree/build/software-aes/ 2>/dev/null || echo "NO software-aes dir"
-          echo "=== find NativeAES artifacts ==="
-          find $MAIN_DIR/out -name '*NativeAES*' 2>/dev/null | head -20
-          echo "=== compile log if any ==="
-          find $MAIN_DIR/out -path '*software-aes*' -name 'compile.log' -exec tail -20 {} \; 2>/dev/null
-          exit $RC
+          export GITHUB_TOKEN=$GH_TOKEN
+          export UNIXNU_DEVICE=$DEVICE_DIR
+          export STEPS=kernel
+          export DEFCONFIG=sheng_defconfig
+          bash scripts/prepare-sheng-evidence.sh
+          echo "=== PIPELINE DONE ==="
+          ls -lh out/sheng/kernel/ || true
+          shasum -a 256 out/sheng/kernel/kernel.macho || true
+          shasum -a 256 out/sheng/kernel/kernel.json || true
     artifacts:
-      - main/out/**/kernel/kernel.macho
-      - main/out/**/kernel/kernel.json
-      - main/out/**/logs/*.log
+      - main/out/sheng/kernel/kernel.macho
+      - main/out/sheng/kernel/kernel.json
+      - main/out/sheng/logs/*.log
