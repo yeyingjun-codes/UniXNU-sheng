@@ -1,6 +1,6 @@
 workflows:
   sheng-kernel:
-    name: Build sheng kernel (16Crow official evidence pipeline)
+    name: Build sheng kernel from CURRENT UniXNU main (official macos.yml equivalent)
     max_build_duration: 120
     instance_type: mac_mini_m2
     environment:
@@ -12,76 +12,54 @@ workflows:
         HOMEBREW_NO_INSTALL_CLEANUP: "1"
         HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
-      - name: Clone repos
+      - name: Clone current main + device repo (with submodules)
         script: |
           set -e
-          echo "GITHUB_TOKEN=$GH_TOKEN" >> $CM_ENV
           cd $CM_BUILD_DIR
-          git clone --depth 1 --recurse-submodules --branch sheng-evidence https://github.com/16Crow/UniXNU-official-build.git main
-          git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/UniXNU/UniXNU.git main
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/UniXNU/UniXNU-sheng.git device
           cd main
           chmod +x unixnu
+          git log --oneline -1
+          cd ../device
+          git log --oneline -1
+          cd ../main
           echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
           echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
-          echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
-          echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
-          echo "STEPS=kernel" >> $CM_ENV
-      - name: Apply UFS poll cap patch
-        script: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          for cand in ('main/drivers/NativeUfs/TransferPoll.h', 'device/drivers/ShengUfs/TransferPoll.h'):
-              p = Path(cand)
-              if p.exists():
-                  text = p.read_text()
-                  old = '    ++state.polls;\n'
-                  new = ('    ++state.polls;\n'
-                         '    // Bounded poll count: if mach_absolute_time() stops (clock not ready in early\n'
-                         '    // bsd_init), the deadline never fires. Cap the spins so a stuck transfer\n'
-                         '    // reports Timeout instead of hanging the kernel forever.\n'
-                         '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
-                  if '1000000U' not in text:
-                      assert old in text, 'poll loop anchor not found in ' + cand
-                      p.write_text(text.replace(old, new, 1))
-                  print('poll cap present in', cand)
-                  raise SystemExit(0)
-          raise SystemExit('TransferPoll.h not found in any expected location')
-          PY
       - name: Install host tools
         script: |
           set -e
-          brew install llvm lld mtools dtc qemu unifdef cmake ninja
+          brew install llvm lld mtools dtc unifdef cmake ninja
           echo "PATH=$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" >> $CM_ENV
-      - name: Verify tools
+      - name: Report toolchain
         script: |
           cd $MAIN_DIR
           sw_vers
+          uname -m
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          for t in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc qemu-system-aarch64 shasum; do
-            echo "$t=$(command -v $t || echo MISSING)"
-          done
-          echo "UNIXNU_DEVICE=$UNIXNU_DEVICE"
-          echo "DEFCONFIG=$DEFCONFIG"
-      - name: Select device
+          python3 --version
+      - name: Defconfig
         script: |
           cd $MAIN_DIR
-          ./unixnu defconfig "$DEFCONFIG"
-      - name: Prepare evidence and build kernel
+          ./unixnu defconfig sheng_defconfig --device "$DEVICE_DIR"
+      - name: Fetch inputs (IPSW components and modules)
         script: |
-          set -euo pipefail
+          set -e
           cd $MAIN_DIR
           export GITHUB_TOKEN=$GH_TOKEN
-          export UNIXNU_DEVICE=$DEVICE_DIR
-          export STEPS=kernel
-          export DEFCONFIG=sheng_defconfig
-          bash scripts/prepare-sheng-evidence.sh
-          echo "=== PIPELINE DONE ==="
-          ls -lh out/sheng/kernel/
-          shasum -a 256 out/sheng/kernel/kernel.macho
-          shasum -a 256 out/sheng/kernel/kernel.json
+          ./unixnu fetch --device "$DEVICE_DIR" 2>&1 | tail -40
+      - name: Build kernel
+        script: |
+          set -e
+          cd $MAIN_DIR
+          export GITHUB_TOKEN=$GH_TOKEN
+          ./unixnu build kernel --device "$DEVICE_DIR" 2>&1 | tail -60
+          echo "=== KERNEL DONE ==="
+          ls -lh out/sheng/ipados-17.7.11-21H461/sheng/kernel/
+          shasum -a 256 out/sheng/ipados-17.7.11-21H461/sheng/kernel/kernel.macho
+          cat out/sheng/ipados-17.7.11-21H461/sheng/kernel/kernel.json | head -c 600 || true
     artifacts:
-      - main/out/sheng/kernel/kernel.macho
-      - main/out/sheng/kernel/kernel.json
-      - main/out/sheng/logs/*.log
+      - main/out/sheng/ipados-17.7.11-21H461/sheng/kernel/kernel.macho
+      - main/out/sheng/ipados-17.7.11-21H461/sheng/kernel/kernel.json
+      - main/out/sheng/ipados-17.7.11-21H461/sheng/logs/*.log
