@@ -31,6 +31,7 @@ workflows:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           # 1) UFS poll cap (as before)
           for cand in ('main/drivers/NativeUfs/TransferPoll.h', 'device/drivers/ShengUfs/TransferPoll.h'):
@@ -63,8 +64,20 @@ workflows:
                   inject = anchor + '+\tboot_progress_stage("' + msg + '");\n'
                   text = text.replace(anchor, inject, 1)
                   count += 1
+          # Added diff lines require matching +newCount values in every hunk header.
+          lines = text.splitlines(keepends=True)
+          starts = [i for i, line in enumerate(lines) if line.startswith('@@ ')]
+          for pos, start in enumerate(starts):
+              end = starts[pos + 1] if pos + 1 < len(starts) else len(lines)
+              old_count = sum(line.startswith((' ', '-')) for line in lines[start + 1:end])
+              new_count = sum(line.startswith((' ', '+')) for line in lines[start + 1:end])
+              match = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@', lines[start])
+              assert match, 'unrecognized hunk header: ' + lines[start]
+              lines[start] = f'@@ -{match.group(1)},{old_count} +{match.group(2)},{new_count} @@' + lines[start].split('@@', 2)[2]
+          text = ''.join(lines)
           patch.write_text(text)
           print('owner stage probes inserted:', count)
+          print('hunk headers recalculated:', len(starts))
           assert count >= 4, 'expected at least 4 stage anchors'
           PY
       - name: Install host tools
