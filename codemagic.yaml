@@ -26,18 +26,12 @@ workflows:
           echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
           echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
           echo "STEPS=kernel" >> $CM_ENV
-      - name: Overlay RamBlock fast path + owner data probes
+      - name: Overlay RamBlock fast path
         script: |
           set -x
-          echo "pwd=$(pwd)"
-          ls -l ci/ || true
           ls -l device/drivers/RamBlock/ | head || true
           cp ci/NativeRamBlock.cpp device/drivers/RamBlock/NativeRamBlock.cpp
-          mkdir -p device/patches/xnu
-          cp ci/zzz-owner-data-diag.patch device/patches/xnu/
-          grep -q zzz-owner-data-diag device/patches/xnu/series 2>/dev/null || echo zzz-owner-data-diag.patch >> device/patches/xnu/series
           grep -c "data fastpath" device/drivers/RamBlock/NativeRamBlock.cpp
-          cat device/patches/xnu/series
       - name: Apply UFS poll cap + owner mount stage probes
         script: |
           set -euo pipefail
@@ -123,7 +117,15 @@ workflows:
           ls -lh out/sheng/kernel/
           shasum -a 256 out/sheng/kernel/kernel.macho
           shasum -a 256 out/sheng/kernel/kernel.json
+      - name: Collect build logs
+        ignore_failure: true
+        script: |
+          set -x
+          mkdir -p collected-logs
+          cp -R main/out/sheng/logs/. collected-logs/ 2>/dev/null || true
+          cp -R main/out/sheng/*/logs/. collected-logs/ 2>/dev/null || true
+          ls -l collected-logs | head -40
     artifacts:
       - main/out/sheng/kernel/kernel.macho
       - main/out/sheng/kernel/kernel.json
-      - main/out/sheng/logs/*.log
+      - collected-logs/*.log
