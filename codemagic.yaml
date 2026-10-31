@@ -26,14 +26,24 @@ workflows:
           echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
           echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
           echo "STEPS=kernel" >> $CM_ENV
-      - name: Overlay RamBlock fast path
+      - name: Overlay RamBlock fast path and link it directly
         script: |
           set -x
-          mkdir -p device/drivers
           rm -rf device/drivers/RamBlock
           cp -R ci/RamBlock device/drivers/RamBlock
           grep -c "data fastpath" device/drivers/RamBlock/NativeRamBlock.cpp
-          ls -l device/drivers/RamBlock | head -20
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('device/board.toml')
+          t = p.read_text()
+          t2 = re.sub(r'^\s*"build-virtio-mmio-bindings\.py --component RamBlock[^\n]*\n', '', t, flags=re.M)
+          t2 = re.sub(r'^\s*"build-virtio-mmio-bindings\.py --component VirtioMmioBlock[^\n]*\n', '', t2, flags=re.M)
+          p.write_text(t2)
+          print('bindings removed:', t.count('build-virtio-mmio-bindings') - t2.count('build-virtio-mmio-bindings'))
+          PY
+          grep -n "component:RamBlock" device/board.toml
+          grep -c "build-virtio-mmio-bindings" device/board.toml || true
       - name: Apply UFS poll cap + owner mount stage probes
         script: |
           set -euo pipefail
