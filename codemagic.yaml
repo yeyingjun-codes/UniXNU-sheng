@@ -98,6 +98,78 @@ workflows:
         script: |
           cd $MAIN_DIR
           ./unixnu defconfig "$DEFCONFIG"
+      - name: Apply UFS poll cap + owner mount stage probes
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1) UFS poll cap (as before)
+          for cand in ('main/drivers/NativeUfs/TransferPoll.h', 'device/drivers/ShengUfs/TransferPoll.h'):
+              p = Path(cand)
+              if p.exists():
+                  text = p.read_text()
+                  old = '    ++state.polls;\n'
+                  new = ('    ++state.polls;\n'
+                         '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
+                  if '1000000U' not in text:
+                      assert old in text, 'poll anchor missing'
+                      p.write_text(text.replace(old, new, 1))
+                  print('poll cap present in', cand)
+                  break
+
+          # 2) Owner mount stage probes: insert boot_progress_stage calls in the patch file
+          patch = Path('main/patches/xnu/offline-owner-systemos-mount.patch')
+          text = patch.read_text()
+          probes = [
+              ('+\tnative_owner_cache_stage = 1;\n', 'owner stage 1 root auth'),
+              ('+\tnative_owner_cache_stage = 2;\n', 'owner stage 2 device select'),
+              ('+\tnative_owner_cache_stage = 3;\n', 'owner stage 3 mount call'),
+              ('+\tnative_owner_cache_stage = 4;\n', 'owner stage 4 lookup'),
+              ('+\tnative_owner_cache_stage = 5;\n', 'owner stage 5 env'),
+              ('+\tnative_owner_cache_stage = 6;\n', 'owner stage 6 done'),
+          ]
+          count = 0
+          for anchor, msg in probes:
+              if anchor in text and f'"{msg}"' not in text:
+                  inject = anchor + '+\tboot_progress_stage("' + msg + '");\n'
+                  text = text.replace(anchor, inject, 1)
+                  count += 1
+          # Added diff lines require matching +newCount values in every hunk header.
+          lines = text.splitlines(keepends=True)
+          starts = [i for i, line in enumerate(lines) if line.startswith('@@ ')]
+          for pos, start in enumerate(starts):
+              end = starts[pos + 1] if pos + 1 < len(starts) else len(lines)
+              old_count = sum(line.startswith((' ', '-')) for line in lines[start + 1:end])
+              new_count = sum(line.startswith((' ', '+')) for line in lines[start + 1:end])
+              match = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@', lines[start])
+              assert match, 'unrecognized hunk header: ' + lines[start]
+              lines[start] = f'@@ -{match.group(1)},{old_count} +{match.group(2)},{new_count} @@' + lines[start].split('@@', 2)[2]
+          text = ''.join(lines)
+          patch.write_text(text)
+          print('owner stage probes inserted:', count)
+          print('hunk headers recalculated:', len(starts))
+          assert count >= 4, 'expected at least 4 stage anchors'
+          PY
+      - name: Install host tools
+        script: |
+          set -e
+          brew install llvm lld mtools dtc qemu unifdef cmake ninja
+          echo "PATH=$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" >> $CM_ENV
+      - name: Verify tools
+        script: |
+          cd $MAIN_DIR
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          for t in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc qemu-system-aarch64 shasum; do
+            echo "$t=$(command -v $t || echo MISSING)"
+          done
+      - name: Select device
+        script: |
+          cd $MAIN_DIR
+          ./unixnu defconfig "$DEFCONFIG"
       - name: Overlay RamBlock fast path into the generated tree
         script: |
           set -x
@@ -112,6 +184,34 @@ workflows:
           for f in $(find . -path '*/tree/drivers/RamBlock/NativeRamBlock.cpp' 2>/dev/null); do
             echo "--- $f"; grep -c "data fastpath" "$f"
           done
+      - name: Inject RamBlock fast path into prepare-sheng-evidence
+        script: |
+          set -x
+          mkdir -p /tmp/ramblock
+          cp ci/RamBlock/NativeRamBlock.cpp /tmp/ramblock/NativeRamBlock.cpp
+          grep -c "data fastpath" /tmp/ramblock/NativeRamBlock.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('main/scripts/prepare-sheng-evidence.sh')
+          t = p.read_text()
+          anchor = './unixnu build kernel'
+          if 'INJECT-RAMBLOCK' in t:
+              print('already injected')
+          else:
+              inject = (
+                  '# INJECT-RAMBLOCK: overlay our RamBlock right after defconfig creates the tree\n'
+                  'for _f in "$ROOT"/out/*/tree/drivers/RamBlock/NativeRamBlock.cpp "$ROOT"/out/sheng/tree/drivers/RamBlock/NativeRamBlock.cpp; do\n'
+                  '  if [ -f "$_f" ]; then\n'
+                  '    cp -f /tmp/ramblock/NativeRamBlock.cpp "$_f"\n'
+                  '    echo "INJECT-RAMBLOCK overlaid $_f -> $(grep -c "data fastpath" "$_f")"\n'
+                  '  fi\n'
+                  'done\n'
+              )
+              t = t.replace(anchor, inject + anchor, 1)
+              p.write_text(t)
+              print('injected')
+          PY
+          grep -n "INJECT-RAMBLOCK" main/scripts/prepare-sheng-evidence.sh | head -5
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
