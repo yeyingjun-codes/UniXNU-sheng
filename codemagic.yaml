@@ -26,14 +26,28 @@ workflows:
           echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
           echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
           echo "STEPS=kernel" >> $CM_ENV
-      - name: Overlay RamBlock fast path as a local module
+      - name: Overlay RamBlock fast path into the build tree
         script: |
           set -x
+          mkdir -p /tmp/ramblock
+          cp ci/RamBlock/NativeRamBlock.cpp /tmp/ramblock/NativeRamBlock.cpp
           mkdir -p main/drivers
           rm -rf main/drivers/RamBlock
           cp -R ci/RamBlock main/drivers/RamBlock
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('main/scripts/build-arm-driver.py')
+          t = p.read_text()
+          anchor = "source = ROOT / 'drivers' / directory / filename"
+          if anchor in t and 'RAMBLOCK_OVERRIDE' not in t:
+              inject = anchor + "\nif 'RamBlock' in str(source):  # RAMBLOCK_OVERRIDE\n    _o = Path('/tmp/ramblock/NativeRamBlock.cpp')\n    if _o.is_file():\n        import shutil as _sh\n        _sh.copyfile(_o, source)\n        print('RAMBLOCK_OVERRIDE applied', source)\n"
+              p.write_text(t.replace(anchor, inject, 1))
+              print('patched build-arm-driver.py')
+          else:
+              print('anchor missing or patched already')
+          PY
+          grep -n RAMBLOCK_OVERRIDE main/scripts/build-arm-driver.py || true
           grep -c "data fastpath" main/drivers/RamBlock/NativeRamBlock.cpp
-          ls -l main/drivers/RamBlock | head -20
       - name: Apply UFS poll cap + owner mount stage probes
         script: |
           set -euo pipefail
