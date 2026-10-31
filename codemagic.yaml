@@ -28,11 +28,13 @@ workflows:
           echo "STEPS=kernel" >> $CM_ENV
       - name: Overlay RamBlock fast path + owner data probes
         script: |
-          set -euo pipefail
-          git clone --depth 1 --branch diag-data-fix https://github.com/yeyingjun-codes/UniXNU-sheng.git /tmp/patched
-          cp /tmp/patched/drivers/RamBlock/NativeRamBlock.cpp device/drivers/RamBlock/NativeRamBlock.cpp
+          set -x
+          echo "pwd=$(pwd)"
+          ls -l ci/ || true
+          ls -l device/drivers/RamBlock/ | head || true
+          cp ci/NativeRamBlock.cpp device/drivers/RamBlock/NativeRamBlock.cpp
           mkdir -p device/patches/xnu
-          cp /tmp/patched/patches/xnu/zzz-owner-data-diag.patch device/patches/xnu/
+          cp ci/zzz-owner-data-diag.patch device/patches/xnu/
           grep -q zzz-owner-data-diag device/patches/xnu/series 2>/dev/null || echo zzz-owner-data-diag.patch >> device/patches/xnu/series
           grep -c "data fastpath" device/drivers/RamBlock/NativeRamBlock.cpp
           cat device/patches/xnu/series
