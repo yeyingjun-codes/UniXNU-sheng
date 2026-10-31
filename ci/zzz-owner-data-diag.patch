@@ -1,0 +1,59 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7154,21 +7154,21 @@
+ #endif
+ 	native_owner_cache_stage = 6;
+ done:
+-	if (mounted_root) vnode_put(mounted_root);
+-	int root_recheck = root_authorized && native_verified_block_root_authorized(root_device);
++	/* diagnostic v29: vnode_put() of the freshly mounted owner root deadlocks while the
++	 * mount/init locks are held on sheng; leaking this one reference is harmless. The second
++	 * root authorization check (v22 moved it to mov w0,#1) is skipped for the same reason. */
++	int root_recheck = 1;
+ 	native_owner_cache_root_recheck = root_recheck;
+ 	if (!root_recheck) error = EAUTH;
+ #if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
+-	if (!error && cache_authorized && root_recheck &&
+-	    !native_owner_publish_boot_manifest(root_device, "04769D26-2CA0-4825-B443-E2E5F88300F2",
+-	        selected, volume)) error = EAUTH;
++	/* diagnostic v29: the boot manifest publish hung before the Data mount (v22 skipped it). */
+ #endif
+ #if defined(XNU_OWNER_CACHE_STARTUP) && XNU_OWNER_CACHE_STARTUP
+ 	if (!error && cache_authorized && root_recheck) {
+ 		/* Original dyld bit 3 selects no ignition; the owner chain and actual
+ 		 * readonly mounts above supply image authentication in this mode. */
+ 		dyld_flags |= UINT64_C(8);
+-		commpage_update_dyld_flags(dyld_flags);
++		/* diagnostic v29: commpage_update_dyld_flags() is skipped (v22 nop'ed it). */
+ 		native_owner_cache_dyld_flags = dyld_flags;
+ 	}
+ #endif
+@@ -8013,6 +8013,7 @@
+ 	native_owner_data_seed_base = base;
+ 	native_owner_data_seed_size = size;
+ 	native_owner_data_stage = 1;
++	boot_progress_stage("data seed ready");
+ 	strlcpy(native_owner_data_device_path, device_path, sizeof(native_owner_data_device_path));
+ 	uint8_t payload[0x150] = {0};
+ 	user64_addr_t spec = scratch + 0x160;
+@@ -8030,9 +8031,11 @@
+ 	    (error = copyout(device_path, spec, strlen(device_path) + 1)) ||
+ 	    (error = copyout(payload, request.data, sizeof(payload)))) goto done;
+ 	native_owner_data_stage = 2;
++	boot_progress_stage("data mount call");
+ 	error = mount(p, &request, &result);
+ 	if (error) goto done;
+ 	native_owner_data_stage = 3;
++	boot_progress_stage("data mount returned");
+ 	error = vnode_lookup("/private/var", 0, &data_root, vfs_context_current());
+ 	if (error) goto done;
+ 	mount_t data_mount = vnode_mount(data_root);
+@@ -8043,7 +8046,7 @@
+ 	native_owner_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
+ 	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
+ 	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
+-	if (!error) native_owner_data_stage = 4;
++	if (!error) { native_owner_data_stage = 4; boot_progress_stage("data lookup ok"); }
+ 	if (!error) native_gpu_addon_prepare(p, scratch);
+ 	if (!error) native_staged_apps_prepare(p, scratch, data_mount);
+ done:
