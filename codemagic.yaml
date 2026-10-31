@@ -29,9 +29,11 @@ workflows:
       - name: Overlay RamBlock fast path
         script: |
           set -x
-          ls -l device/drivers/RamBlock/ | head || true
-          cp ci/NativeRamBlock.cpp device/drivers/RamBlock/NativeRamBlock.cpp
+          mkdir -p device/drivers
+          rm -rf device/drivers/RamBlock
+          cp -R ci/RamBlock device/drivers/RamBlock
           grep -c "data fastpath" device/drivers/RamBlock/NativeRamBlock.cpp
+          ls -l device/drivers/RamBlock | head -20
       - name: Apply UFS poll cap + owner mount stage probes
         script: |
           set -euo pipefail
