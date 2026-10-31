@@ -49,26 +49,33 @@ workflows:
           set -x
           mkdir -p /tmp/ramblock
           cp ci/RamBlock/NativeRamBlock.cpp /tmp/ramblock/NativeRamBlock.cpp
-          grep -c "data fastpath" /tmp/ramblock/NativeRamBlock.cpp
+          echo "source fastpath count: $(grep -c 'data fastpath' /tmp/ramblock/NativeRamBlock.cpp)"
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('main/scripts/prepare-sheng-evidence.sh')
-          t = p.read_text()
-          if 'INJECT-RAMBLOCK' in t:
-              print('already injected')
-          else:
-              inject = (
-                  '# INJECT-RAMBLOCK\n'
+          patched = 0
+          for name in ('main/scripts/prepare-sheng-evidence.sh', 'main/scripts/prepare-sheng-complete.sh'):
+              p = Path(name)
+              if not p.is_file():
+                  continue
+              t = p.read_text()
+              if 'INJECT-RAMBLOCK' in t:
+                  print('already', name); continue
+              block = (
+                  '# INJECT-RAMBLOCK: overlay our RamBlock immediately before the real kernel build\n'
                   'for _f in $(find "$ROOT/out" -path "*/tree/drivers/RamBlock/NativeRamBlock.cpp" 2>/dev/null); do\n'
                   '  cp -f /tmp/ramblock/NativeRamBlock.cpp "$_f"\n'
                   '  echo "INJECT-RAMBLOCK $_f -> $(grep -c \'data fastpath\' "$_f")\n"\n'
                   'done\n'
               )
-              t = t.replace('./unixnu build kernel', inject + './unixnu build kernel', 1)
-              p.write_text(t)
-              print('injected')
+              if './unixnu build kernel' in t:
+                  t = t.replace('./unixnu build kernel', block + './unixnu build kernel')
+                  p.write_text(t)
+                  patched += 1
+                  print('patched', name, 'occurrences', t.count('INJECT-RAMBLOCK'))
+          print('files patched', patched)
           PY
-          grep -n "INJECT-RAMBLOCK" main/scripts/prepare-sheng-evidence.sh | head -3
+          grep -c "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh
+          grep -n "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh | head -4
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
