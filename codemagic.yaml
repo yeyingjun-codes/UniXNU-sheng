@@ -52,39 +52,25 @@ workflows:
           echo "source fastpath: $(grep -c 'data fastpath' /tmp/ramblock/NativeRamBlock.cpp)"
           python3 - <<'PY'
           from pathlib import Path
-          block = (
-              '\n# INJECT-RAMBLOCK: overlay our RamBlock right after defconfig creates the tree\n'
-              'for _f in $(find "$ROOT/out" -path "*/tree/drivers/RamBlock/NativeRamBlock.cpp" 2>/dev/null); do\n'
-              '  cp -f /tmp/ramblock/NativeRamBlock.cpp "$_f"\n'
-              '  echo "INJECT-RAMBLOCK $_f -> $(grep -c \'data fastpath\' "$_f")\n"\n'
-              'done\n'
-          )
-          total = 0
-          for name in ('main/scripts/prepare-sheng-evidence.sh', 'main/scripts/prepare-sheng-complete.sh'):
-              p = Path(name)
-              if not p.is_file():
-                  print('missing', name); continue
-              t = p.read_text()
-              if 'INJECT-RAMBLOCK' in t:
-                  print('already', name); continue
-              # 在每个 defconfig 行后面插入（defconfig 之后 tree 一定已重建）
-              lines = t.splitlines(keepends=True)
-              out = []
-              n = 0
-              for line in lines:
-                  out.append(line)
-                  if 'unixnu defconfig' in line and not line.lstrip().startswith('#'):
-                      out.append(block)
-                      n += 1
-              if n:
-                  p.write_text(''.join(out))
-                  total += n
-                  print(f'patched {name} after {n} defconfig line(s)')
-          print('insert points', total)
+          p = Path('main/scripts/unixnu/kernel.py')
+          t = p.read_text()
+          if 'INJECT_RAMBLOCK' in t:
+              print('already patched')
+          else:
+              patch = (
+                  '    # INJECT_RAMBLOCK: the tree exists here and archives have not started yet.\n'
+                  '    import shutil as _shutil\n'
+                  '    for _p in ctx.tree.glob("drivers/RamBlock/NativeRamBlock.cpp"):\n'
+                  '        _shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", _p)\n'
+                  '        print("INJECT-RAMBLOCK", _p, _p.read_text().count("data fastpath"))\n'
+              )
+              t = t.replace('    build_archives(ctx, env)', patch + '    build_archives(ctx, env)', 1)
+              p.write_text(t)
+              print('patched kernel.py')
           PY
-          echo "=== verify ==="
-          grep -c "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh || true
-          grep -n -A1 "unixnu defconfig" main/scripts/prepare-sheng-complete.sh | head -8
+          grep -n "INJECT_RAMBLOCK" main/scripts/unixnu/kernel.py
+          echo "=== sanity: source is python ==="
+          python3 -c "import ast;ast.parse(open('main/scripts/unixnu/kernel.py').read());print('OK')"
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
