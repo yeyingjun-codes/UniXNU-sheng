@@ -53,24 +53,32 @@ workflows:
           python3 - <<'PY'
           from pathlib import Path
           p = Path('main/scripts/unixnu/kernel.py')
-          t = p.read_text()
-          if 'INJECT_RAMBLOCK' in t:
+          raw = p.read_bytes().decode('utf-8')
+          if 'INJECT_RAMBLOCK' in raw:
               print('already patched')
           else:
-              patch = (
-                  '    # INJECT_RAMBLOCK: the tree exists here and archives have not started yet.\n'
-                  '    import shutil as _shutil\n'
-                  '    for _p in ctx.tree.glob("drivers/RamBlock/NativeRamBlock.cpp"):\n'
-                  '        _shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", _p)\n'
-                  '        print("INJECT-RAMBLOCK", _p, _p.read_text().count("data fastpath"))\n'
+              crlf = '\r\n' if '\r\n' in raw else '\n'
+              block = (
+                  '    import shutil as _rb_shutil' + crlf
+                  + '    _rb_hit = 0' + crlf
+                  + '    for _rb_p in ctx.tree.glob("drivers/RamBlock/*.cpp"):' + crlf
+                  + '        _rb_shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", _rb_p)' + crlf
+                  + '        _rb_hit += 1' + crlf
+                  + '        print("INJECT-RAMBLOCK", _rb_p, _rb_p.read_text().count("data fastpath"))' + crlf
+                  + '    print("INJECT-RAMBLOCK-COUNT", _rb_hit)' + crlf
               )
-              t = t.replace('    build_archives(ctx, env)', patch + '    build_archives(ctx, env)', 1)
-              p.write_text(t)
-              print('patched kernel.py')
+              target = '    build_archives(ctx, env)'
+              if target not in raw:
+                  raise SystemExit('anchor not found')
+              raw = raw.replace(target, block + target, 1)
+              p.write_bytes(raw.encode('utf-8'))
+              print('patched with', repr(crlf))
+          import ast
+          ast.parse(p.read_text(encoding='utf-8'))
+          print('ast OK')
           PY
-          grep -n "INJECT_RAMBLOCK" main/scripts/unixnu/kernel.py
-          echo "=== sanity: source is python ==="
-          python3 -c "import ast;ast.parse(open('main/scripts/unixnu/kernel.py').read());print('OK')"
+          grep -c "INJECT-RAMBLOCK" main/scripts/unixnu/kernel.py
+          grep -c "_rb_shutil" main/scripts/unixnu/kernel.py
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
