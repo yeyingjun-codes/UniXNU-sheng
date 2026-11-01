@@ -49,33 +49,42 @@ workflows:
           set -x
           mkdir -p /tmp/ramblock
           cp ci/RamBlock/NativeRamBlock.cpp /tmp/ramblock/NativeRamBlock.cpp
-          echo "source fastpath count: $(grep -c 'data fastpath' /tmp/ramblock/NativeRamBlock.cpp)"
+          echo "source fastpath: $(grep -c 'data fastpath' /tmp/ramblock/NativeRamBlock.cpp)"
           python3 - <<'PY'
           from pathlib import Path
-          patched = 0
+          block = (
+              '\n# INJECT-RAMBLOCK: overlay our RamBlock right after defconfig creates the tree\n'
+              'for _f in $(find "$ROOT/out" -path "*/tree/drivers/RamBlock/NativeRamBlock.cpp" 2>/dev/null); do\n'
+              '  cp -f /tmp/ramblock/NativeRamBlock.cpp "$_f"\n'
+              '  echo "INJECT-RAMBLOCK $_f -> $(grep -c \'data fastpath\' "$_f")\n"\n'
+              'done\n'
+          )
+          total = 0
           for name in ('main/scripts/prepare-sheng-evidence.sh', 'main/scripts/prepare-sheng-complete.sh'):
               p = Path(name)
               if not p.is_file():
-                  continue
+                  print('missing', name); continue
               t = p.read_text()
               if 'INJECT-RAMBLOCK' in t:
                   print('already', name); continue
-              block = (
-                  '# INJECT-RAMBLOCK: overlay our RamBlock immediately before the real kernel build\n'
-                  'for _f in $(find "$ROOT/out" -path "*/tree/drivers/RamBlock/NativeRamBlock.cpp" 2>/dev/null); do\n'
-                  '  cp -f /tmp/ramblock/NativeRamBlock.cpp "$_f"\n'
-                  '  echo "INJECT-RAMBLOCK $_f -> $(grep -c \'data fastpath\' "$_f")\n"\n'
-                  'done\n'
-              )
-              if './unixnu build kernel' in t:
-                  t = t.replace('./unixnu build kernel', block + './unixnu build kernel')
-                  p.write_text(t)
-                  patched += 1
-                  print('patched', name, 'occurrences', t.count('INJECT-RAMBLOCK'))
-          print('files patched', patched)
+              # 在每个 defconfig 行后面插入（defconfig 之后 tree 一定已重建）
+              lines = t.splitlines(keepends=True)
+              out = []
+              n = 0
+              for line in lines:
+                  out.append(line)
+                  if 'unixnu defconfig' in line and not line.lstrip().startswith('#'):
+                      out.append(block)
+                      n += 1
+              if n:
+                  p.write_text(''.join(out))
+                  total += n
+                  print(f'patched {name} after {n} defconfig line(s)')
+          print('insert points', total)
           PY
-          grep -c "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh
-          grep -n "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh | head -4
+          echo "=== verify ==="
+          grep -c "INJECT-RAMBLOCK" main/scripts/prepare-sheng-complete.sh || true
+          grep -n -A1 "unixnu defconfig" main/scripts/prepare-sheng-complete.sh | head -8
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
