@@ -3,3 +3,13 @@ kind = "soc"
 name = "sm8550"
 git = "https://github.com/UniXNU/UniXNU-sm8550-common.git"
 commit = "a9f45dc60c035084b95463781538380f4c3606c9"
+
+# The iPadOS 27 profile compiles IOHIDFamily from its public sources. The OS
+# profile carries the pin, but profile.toml is not among the feed roots the CLI
+# walks, so the reference is declared here where the device feeds are read.
+[[source]]
+kind = "refer"
+name = "IOHIDFamily"
+git = "https://github.com/apple-oss-distributions/IOHIDFamily.git"
+ref = "IOHIDFamily-2238.120.5"
+commit = "e31e90a24c27ad6cbe981650d12a1a4124065b03"
