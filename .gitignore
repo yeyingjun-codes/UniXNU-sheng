@@ -37,6 +37,8 @@ __pycache__/
 *.spv
 *.metallib
 *.bin
+!policies/**/*.bin
+!firmware/**/*.bin
 *.mbn
 *.fw
 *.pem
