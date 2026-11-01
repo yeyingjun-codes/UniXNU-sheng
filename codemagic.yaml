@@ -59,26 +59,29 @@ workflows:
           else:
               crlf = '\r\n' if '\r\n' in raw else '\n'
               block = (
-                  '    import shutil as _rb_shutil' + crlf
-                  + '    _rb_hit = 0' + crlf
-                  + '    for _rb_p in ctx.tree.glob("drivers/RamBlock/*.cpp"):' + crlf
-                  + '        _rb_shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", _rb_p)' + crlf
-                  + '        _rb_hit += 1' + crlf
-                  + '        print("INJECT-RAMBLOCK", _rb_p, _rb_p.read_text().count("data fastpath"))' + crlf
-                  + '    print("INJECT-RAMBLOCK-COUNT", _rb_hit)' + crlf
+                  '    _rb_shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", str(ctx.tree / "drivers" / "RamBlock" / "NativeRamBlock.cpp"))' + crlf
+                  + '    print("INJECT-RAMBLOCK-COPY", (ctx.tree / "drivers" / "RamBlock" / "NativeRamBlock.cpp").read_text().count("data fastpath"))' + crlf
               )
               target = '    build_archives(ctx, env)'
-              if target not in raw:
-                  raise SystemExit('anchor not found')
-              raw = raw.replace(target, block + target, 1)
+              # 放进 build_archives 内部：每个 archive 前都检查并覆盖一次
+              inner_anchor = "        log(f'kernel: archive {index}/{len(entries)}: {entry}')"
+              if inner_anchor not in raw:
+                  raise SystemExit('inner anchor not found')
+              inner_block = (
+                  '        _rb_dst = ctx.tree / "drivers" / "RamBlock" / "NativeRamBlock.cpp"' + crlf
+                  + '        _rb_dst.parent.mkdir(parents=True, exist_ok=True)' + crlf
+                  + '        _rb_shutil.copyfile("/tmp/ramblock/NativeRamBlock.cpp", str(_rb_dst))' + crlf
+                  + '        print("INJECT-RAMBLOCK", _rb_dst, _rb_dst.read_text().count("data fastpath"))' + crlf
+              )
+              raw = raw.replace('def build_archives(ctx, env):', 'def build_archives(ctx, env):' + crlf + '    import shutil as _rb_shutil', 1)
+              raw = raw.replace(inner_anchor, inner_block + inner_anchor, 1)
               p.write_bytes(raw.encode('utf-8'))
-              print('patched with', repr(crlf))
+              print('patched inside build_archives with', repr(crlf))
           import ast
           ast.parse(p.read_text(encoding='utf-8'))
           print('ast OK')
           PY
           grep -c "INJECT-RAMBLOCK" main/scripts/unixnu/kernel.py
-          grep -c "_rb_shutil" main/scripts/unixnu/kernel.py
       - name: Prepare evidence and build kernel
         script: |
           set -euo pipefail
