@@ -22,7 +22,7 @@
 
 extern "C" {
 extern unsigned long gPhysBase, gPhysSize;
-void boot_progress_stage(const char *stage);
+// probe uses IOLog now
 int native_ram_block_volume_device(const char *, dev_t *, char *, size_t);
 volatile uint32_t native_ram_block_ready = 0;
 volatile uint64_t native_ram_block_bytes = 0;
@@ -394,12 +394,12 @@ static int selectVolumeSeed(const char *uuid, dev_t *device, char *path, size_t 
    * registry walk deadlocks on sheng before the Data mount returns. */
   NativeRamBlock *known = gNativeRamBlock;
   if (!known) {
-    boot_progress_stage("data fastpath no instance");
+    IOLog("data fastpath no instance\n");
   } else {
-    boot_progress_stage("data fastpath enter");
+    IOLog("data fastpath enter\n");
     OSIterator *children = known->getChildIterator(gIOServicePlane);
     if (!children) {
-      boot_progress_stage("data fastpath no children");
+      IOLog("data fastpath no children\n");
     } else {
       OSObject *object;
       while (!selected && (object = children->getNextObject())) {
@@ -413,11 +413,11 @@ static int selectVolumeSeed(const char *uuid, dev_t *device, char *path, size_t 
         if (!name || !mjr || !mnr || !name->getLength() ||
             name->getLength() >= sizeof(candidatePath) - 6 || name->getLength() >= size - 6 ||
             mjr->unsigned64BitValue() > 255 || mnr->unsigned64BitValue() > 0xffffff) continue;
-        boot_progress_stage("data fastpath media");
+        IOLog("data fastpath media\n");
         known->attachStore();
-        boot_progress_stage("data fastpath attach");
+        IOLog("data fastpath attach\n");
         if (!known->seedInfo(&base,&bytes,hash)) continue;
-        boot_progress_stage("data fastpath seedinfo");
+        IOLog("data fastpath seedinfo\n");
         candidate = static_cast<dev_t>(makedev(mjr->unsigned32BitValue(), mnr->unsigned32BitValue()));
         snprintf(candidatePath, sizeof(candidatePath), "/dev/%s", name->getCStringNoCopy());
         selected = true;
@@ -429,8 +429,9 @@ static int selectVolumeSeed(const char *uuid, dev_t *device, char *path, size_t 
   /* Fallback: original registry lookup for boards where the started driver is
    * not the provider of the matching media. */
   if (!selected) {
-    boot_progress_stage("data fastpath fallback");
+    IOLog("data fallback match enter\n");
     OSDictionary *matching = IOService::serviceMatching("IOMedia");
+    IOLog("data fallback match ok\n");
     OSDictionary *properties = OSDictionary::withCapacity(1);
     OSString *wanted = OSString::withCString(uuid);
     if (!matching || !properties || !wanted) {
@@ -440,9 +441,11 @@ static int selectVolumeSeed(const char *uuid, dev_t *device, char *path, size_t 
     bool ready = properties->setObject("UUID", wanted) && matching->setObject("IOPropertyMatch", properties);
     wanted->release(); properties->release();
     OSIterator *iterator = ready ? IOService::getMatchingServices(matching) : nullptr;
+    IOLog("%s\n", iterator ? "data fallback services ok" : "data fallback services null");
     matching->release();
     if (!iterator) return 0;
     while (OSObject *object = iterator->getNextObject()) {
+      IOLog("data fallback iter\n");
       IOService *media = OSDynamicCast(IOService, object);
       if (!media) continue;
       if (++matches != 1) { selected = false; break; }
