@@ -151,9 +151,10 @@ def main():
     metadata = packed_ramdisk.pack(container, args.output)
     print('packed seed: ' + json.dumps(metadata, default=str), flush=True)
 
+    extra = {k: v for k, v in metadata.items() if k not in ('packed', 'bytes')}
     report = dict(output=str(args.output), bytes=args.output.stat().st_size, gib=args.gib,
                   container_bytes=blocks * block_size, source_files=count,
-                  source_bytes=total, **{k: v for k, v in metadata.items() if k != 'packed'})
+                  source_bytes=total, **extra)
     (args.output.parent / 'data-seed.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2), flush=True)
 
