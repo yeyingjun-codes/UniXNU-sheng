@@ -153,6 +153,7 @@ def main():
     print('packed base seed: ' + json.dumps(metadata, default=str), flush=True)
 
     print(f'growing the container to {args.gib} GiB', flush=True)
+    (args.unixnu / 'build').mkdir(parents=True, exist_ok=True)   # seed-data-grow keeps its scratch there
     run([sys.executable, args.unixnu / 'scripts/seed-data-grow.py',
          '--gib', str(args.gib), base_dbr, args.output])
 
