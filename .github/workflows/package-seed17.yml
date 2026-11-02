@@ -71,6 +71,11 @@ jobs:
             echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
             exit 1
           fi
+      - name: deps
+        working-directory: UniXNU
+        run: |
+          ./unixnu fetch -D ../device --os 17
+          ./unixnu status -D ../device --os 17 | head -40
       - name: extract the OS volume
         working-directory: UniXNU
         run: |
@@ -107,7 +112,8 @@ jobs:
                    UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/payload/payload.json; do
             echo "== $j"; cat "$j" 2>/dev/null | head -40
           done
-          ls -la UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/*/ 2>/dev/null
+          ls -la UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/*/ 2>/dev/null || true
+          exit 0
       - name: images
         if: always()
         uses: actions/upload-artifact@v4
