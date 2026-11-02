@@ -35,14 +35,22 @@ def sh(*args):
 
 
 def attach(image, mountpoint=None, readonly=False):
-    args = ['hdiutil', 'attach', '-nobrowse', '-owners', 'off', '-plist']
+    args = ['hdiutil', 'attach', '-noverify', '-noautofsck', '-plist']
     if readonly:
         args.insert(1, '-readonly')
     if mountpoint is not None:
         args += ['-mountpoint', str(mountpoint)]
-    info = plistlib.loads(subprocess.check_output(args + [str(image)]))
+    args.append(str(image))
+    done = subprocess.run(args, capture_output=True)
+    if done.returncode != 0:
+        raise SystemExit('hdiutil attach failed: ' + done.stderr.decode('utf-8', 'replace')[-1200:])
+    info = json.loads(done.stdout)
     entity = info['system-entities'][0]
     return info, entity['dev-entry']
+
+
+def mounted_volumes(info):
+    return [e for e in info['system-entities'] if e.get('mount-point')]
 
 
 def main():
@@ -72,10 +80,20 @@ def main():
     os_info = data_info = None
     try:
         os_info, os_dev = attach(args.os_dmg, readonly=True)
-        volumes = [e for e in os_info['system-entities'] if e.get('mount-point')]
-        if len(volumes) != 1:
-            raise SystemExit(f'expected one mounted OS volume, saw {len(volumes)}')
-        source = Path(volumes[0]['mount-point']) / 'private/var'
+        volumes = mounted_volumes(os_info)
+        print('mounted OS volumes: ' + ', '.join(str(v.get('mount-point')) for v in volumes), flush=True)
+        chosen = None
+        for entry in volumes:
+            root = Path(entry['mount-point'])
+            if (root / 'System/Library/CoreServices').is_dir() or (root / 'private/var').is_dir():
+                chosen = root
+                break
+        if chosen is None and volumes:
+            chosen = Path(volumes[0]['mount-point'])
+        if chosen is None:
+            raise SystemExit('the OS image mounted no volume')
+        print(f'using OS volume {chosen}', flush=True)
+        source = chosen / 'private/var'
         if not source.is_dir():
             print(f'warning: {source} is absent; the seed keeps only the empty skeleton', flush=True)
 
