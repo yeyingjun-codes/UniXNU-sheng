@@ -1,0 +1,81 @@
+name: firmware-log
+
+# Build only the firmware volume and publish its log, so the EDK II output (which the driver
+# redirects into logs/firmware.log) can be read. No boot image, no device access.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [firmware-log]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-log
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 474cfeeb4e35b3fc91ec98cd2bb54e1ab25389b8
+          path: UniXNU
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          submodules: recursive
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja bison pkgconf blacktop/tap/ipsw
+          {
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+          } >> "$GITHUB_PATH"
+      - name: patch the ramdisk driver
+        run: |
+          python3 device/.github/scripts/patch-ramdisk.py UniXNU
+          grep -n "Offset += 2" UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c
+      - name: build firmware
+        working-directory: UniXNU
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          ./unixnu fetch -D ../device --os 27 >/dev/null
+          ./unixnu build firmware -D ../device --os 27 --uefi ../uefi-sheng 2>&1 | tee /tmp/fw.out || true
+          echo '--- stdout tail ---'
+          tail -40 /tmp/fw.out
+      - name: show the driver log
+        if: always()
+        run: |
+          set +e
+          find UniXNU/out/sheng -name 'firmware*.log' -exec sh -c 'echo "===== $1 ====="; wc -l "$1"; tail -120 "$1"' _ {} \;
+          echo '--- EDK II module evidence ---'
+          find UniXNU/out/sheng -name 'firmware.log' -exec grep -c 'Building' {} \;
+          echo '--- build dir ---'
+          ls -la uefi-sheng/Build/shengPkg/DEBUG_CLANGPDB/FV/ 2>/dev/null
+          exit 0
+      - name: artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-logs
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            UniXNU/out/sheng/*/*/logs/*.log
+            uefi-sheng/Build/shengPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd
+            /tmp/fw.out
