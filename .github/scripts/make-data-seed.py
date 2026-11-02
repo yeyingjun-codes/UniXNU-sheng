@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Build the Data seed that CONFIG_XNU_OWNER_DATA_MOUNT requires, from the IPSW OS volume.
 
-The seed is the official DBRDISK1 packed format: a small APFS "OwnerData" container that
-holds the OS volume's initial /private/var, packed by drivers/DarwinBoot/Test/packed_ramdisk.
+The seed is the repository's own format: a small APFS "OwnerData" container holding the OS
+volume's initial /private/var, packed by drivers/DarwinBoot/Test/packed_ramdisk and grown to
+the requested size by scripts/seed-data-grow.py. No board file and no official script changes.
 
 usage: make-data-seed.py OS_DMG OUTPUT.dbr UNI_XNU_ROOT [--gib N]
 """
 import argparse
 import json
 import os
-import plistlib
+import re
 import stat
 import subprocess
 import sys
@@ -30,28 +31,48 @@ SKELETON = (
 BASE_MIB = 32
 
 
-def sh(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+def run(args):
+    """Run a command, print it, and fail loudly with its output."""
+    print('+ ' + ' '.join(str(a) for a in args), flush=True)
+    done = subprocess.run([str(a) for a in args], capture_output=True)
+    out = done.stdout.decode('utf-8', 'replace')
+    err = done.stderr.decode('utf-8', 'replace')
+    if out.strip():
+        print(out.strip()[:4000], flush=True)
+    if err.strip():
+        print(err.strip()[-4000:], flush=True)
+    if done.returncode != 0:
+        raise SystemExit(f'command failed ({done.returncode}): {args[0]}')
+    return out
 
 
 def attach(image, mountpoint=None, readonly=False):
+    """Attach an image and return (whole-disk device, mounted volume paths)."""
     args = ['hdiutil', 'attach']
     if readonly:
         args.append('-readonly')
-    args += ['-noverify', '-noautofsck', '-plist']
+    args += ['-noverify', '-noautofsck']
     if mountpoint is not None:
         args += ['-mountpoint', str(mountpoint)]
-    args.append(str(image))
-    done = subprocess.run(args, capture_output=True)
-    if done.returncode != 0:
-        raise SystemExit('hdiutil attach failed: ' + done.stderr.decode('utf-8', 'replace')[-1200:])
-    info = json.loads(done.stdout)
-    entity = info['system-entities'][0]
-    return info, entity['dev-entry']
+    args.append(image)
+    out = run(args)
+    device = None
+    volumes = []
+    for line in out.splitlines():
+        match = re.match(r'(/dev/disk\d+)\s', line)
+        if match and device is None:
+            device = match.group(1)
+        fields = [part for part in re.split(r'\t+', line) if part]
+        if len(fields) >= 3 and fields[0].startswith('/dev/disk') and fields[2].startswith('/Volumes'):
+            volumes.append(fields[2])
+    if device is None:
+        raise SystemExit('could not find the attached disk device in hdiutil output')
+    return device, volumes
 
 
-def mounted_volumes(info):
-    return [e for e in info['system-entities'] if e.get('mount-point')]
+def detach(device):
+    subprocess.run(['hdiutil', 'detach', device, '-force'], capture_output=True)
+    print(f'detached {device}', flush=True)
 
 
 def main():
@@ -69,39 +90,31 @@ def main():
     if args.output.exists():
         raise SystemExit('Refuse to overwrite ' + str(args.output))
 
-    os_mount = work / 'os-mount'
-    data_mount = work / 'data-mount'
-    for path in (os_mount, data_mount):
-        path.mkdir(exist_ok=True)
-
     print('creating the 32 MiB APFS OwnerData skeleton', flush=True)
-    sh('hdiutil', 'create', '-size', f'{BASE_MIB}m', '-layout', 'NONE', '-fs', 'APFS',
-       '-volname', 'OwnerData', '-type', 'UDTO', '-ov', str(base))
+    run(['hdiutil', 'create', '-size', f'{BASE_MIB}m', '-layout', 'NONE', '-fs', 'APFS',
+         '-volname', 'OwnerData', '-type', 'UDTO', '-ov', base])
 
-    os_info = data_info = None
+    count = total = 0
+    os_dev = data_dev = None
     try:
-        os_info, os_dev = attach(args.os_dmg, readonly=True)
-        volumes = mounted_volumes(os_info)
-        print('mounted OS volumes: ' + ', '.join(str(v.get('mount-point')) for v in volumes), flush=True)
-        chosen = None
-        for entry in volumes:
-            root = Path(entry['mount-point'])
-            if (root / 'System/Library/CoreServices').is_dir() or (root / 'private/var').is_dir():
-                chosen = root
+        os_dev, volumes = attach(args.os_dmg, readonly=True)
+        print('mounted:' + (', '.join(volumes) if volumes else ' none'), flush=True)
+        source = None
+        for path in volumes:
+            candidate = Path(path) / 'private/var'
+            if candidate.is_dir():
+                source = candidate
                 break
-        if chosen is None and volumes:
-            chosen = Path(volumes[0]['mount-point'])
-        if chosen is None:
-            raise SystemExit('the OS image mounted no volume')
-        print(f'using OS volume {chosen}', flush=True)
-        source = chosen / 'private/var'
-        if not source.is_dir():
-            print(f'warning: {source} is absent; the seed keeps only the empty skeleton', flush=True)
+        if source is None and volumes:
+            source = Path(volumes[0]) / 'private/var'
 
-        data_info, data_dev = attach(base)
-        target = data_mount
-        count = total = 0
-        if source.is_dir():
+        data_dev, data_volumes = attach(base)
+        if len(data_volumes) != 1:
+            raise SystemExit(f'the skeleton mounted {len(data_volumes)} volumes: {data_volumes}')
+        target = Path(data_volumes[0])
+
+        if source is not None and source.is_dir():
+            print(f'copying the initial var tree of {source}', flush=True)
             for current, dirs, files in os.walk(source, followlinks=False):
                 dirs[:] = [name for name in dirs if name not in IGNORED]
                 dest = target / Path(current).relative_to(source)
@@ -117,19 +130,17 @@ def main():
                         subprocess.run(['cp', '-p', str(src), str(dst)], check=True)
                         count += 1
                         total += src.stat().st_size
-        for name in SKELETON:
-            (target / name).mkdir(parents=True, exist_ok=True)
-        for name in EXTRA_DIRS:
+        else:
+            print('warning: no initial /private/var in the OS volume; writing the empty skeleton', flush=True)
+        for name in SKELETON + EXTRA_DIRS:
             (target / name).mkdir(parents=True, exist_ok=True)
         os.chmod(target / 'tmp', 0o1777)
-        print(f'copied {count} files, {total} bytes of initial /private/var', flush=True)
+        print(f'seed content: {count} files, {total} bytes', flush=True)
     finally:
-        if data_info is not None:
-            subprocess.run(['hdiutil', 'detach', data_info['system-entities'][0]['dev-entry'], '-force'],
-                           capture_output=True)
-        if os_info is not None:
-            subprocess.run(['hdiutil', 'detach', os_info['system-entities'][0]['dev-entry'], '-force'],
-                           capture_output=True)
+        if data_dev:
+            detach(data_dev)
+        if os_dev:
+            detach(os_dev)
 
     data = base.read_bytes()
     if len(data) != BASE_MIB * 1024**2 or data[32:36] != b'NXSB':
@@ -139,16 +150,16 @@ def main():
     import packed_ramdisk
 
     metadata = packed_ramdisk.pack(base, base_dbr)
-    print('packed base seed:', json.dumps(metadata), flush=True)
+    print('packed base seed: ' + json.dumps(metadata, default=str), flush=True)
 
     print(f'growing the container to {args.gib} GiB', flush=True)
-    subprocess.run([sys.executable, str(args.unixnu / 'scripts/seed-data-grow.py'),
-                    '--gib', str(args.gib), str(base_dbr), str(args.output)], check=True)
+    run([sys.executable, args.unixnu / 'scripts/seed-data-grow.py',
+         '--gib', str(args.gib), base_dbr, args.output])
 
-    report = dict(output=str(args.output), bytes=args.output.stat().st_size,
-                  gib=args.gib, source_files=count, source_bytes=total, **metadata)
+    report = dict(output=str(args.output), bytes=args.output.stat().st_size, gib=args.gib,
+                  source_files=count, source_bytes=total)
     (args.output.parent / 'data-seed.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2), flush=True)
 
 
 if __name__ == '__main__':
