@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the Data seed that CONFIG_XNU_OWNER_DATA_MOUNT requires, from the IPSW OS volume.
 
-The seed is the repository's own format: a small APFS "OwnerData" container holding the OS
-volume's initial /private/var, packed by drivers/DarwinBoot/Test/packed_ramdisk and grown to
-the requested size by scripts/seed-data-grow.py. No board file and no official script changes.
+The seed is the repository's own format: an APFS "OwnerData" container holding the OS volume's
+initial /private/var, packed by drivers/DarwinBoot/Test/packed_ramdisk. The container is created
+at the final size, so no resize step and no container discovery are involved.
 
 usage: make-data-seed.py OS_DMG OUTPUT.dbr UNI_XNU_ROOT [--gib N]
 """
@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -28,11 +29,9 @@ SKELETON = (
     'keybags/backup', 'mobile/Library/Preferences', 'mobile/Library/Caches',
     'mobile/Library/Logs', 'mobile/Containers', 'mobile/Documents', 'mobile/Media',
 )
-BASE_MIB = 32
 
 
 def run(args):
-    """Run a command, print it, and fail loudly with its output."""
     print('+ ' + ' '.join(str(a) for a in args), flush=True)
     done = subprocess.run([str(a) for a in args], capture_output=True)
     out = done.stdout.decode('utf-8', 'replace')
@@ -46,15 +45,11 @@ def run(args):
     return out
 
 
-def attach(image, mountpoint=None, readonly=False):
-    """Attach an image and return (whole-disk device, mounted volume paths)."""
+def attach(image, readonly=False):
     args = ['hdiutil', 'attach']
     if readonly:
         args.append('-readonly')
-    args += ['-noverify', '-noautofsck']
-    if mountpoint is not None:
-        args += ['-mountpoint', str(mountpoint)]
-    args.append(image)
+    args += ['-noverify', '-noautofsck', image]
     out = run(args)
     device = None
     volumes = []
@@ -85,14 +80,14 @@ def main():
 
     work = args.output.resolve().parent / 'seed-work'
     work.mkdir(parents=True, exist_ok=True)
-    base = work / 'owner-data-base.cdr'
-    base_dbr = work / 'owner-data-base.dbr'
-    if args.output.exists():
-        raise SystemExit('Refuse to overwrite ' + str(args.output))
+    container = work / f'owner-data-{args.gib}g.cdr'
+    for path in (args.output, container):
+        if path.exists():
+            path.unlink()
 
-    print('creating the 32 MiB APFS OwnerData skeleton', flush=True)
-    run(['hdiutil', 'create', '-size', f'{BASE_MIB}m', '-layout', 'NONE', '-fs', 'APFS',
-         '-volname', 'OwnerData', '-type', 'UDTO', '-ov', base])
+    print(f'creating the {args.gib} GiB APFS OwnerData container', flush=True)
+    run(['hdiutil', 'create', '-size', f'{args.gib}g', '-layout', 'NONE', '-fs', 'APFS',
+         '-volname', 'OwnerData', '-type', 'UDTO', '-ov', container])
 
     count = total = 0
     os_dev = data_dev = None
@@ -105,13 +100,13 @@ def main():
             if candidate.is_dir():
                 source = candidate
                 break
-        if source is None and volumes:
-            source = Path(volumes[0]) / 'private/var'
 
-        data_dev, data_volumes = attach(base)
-        if len(data_volumes) != 1:
-            raise SystemExit(f'the skeleton mounted {len(data_volumes)} volumes: {data_volumes}')
-        target = Path(data_volumes[0])
+        data_dev, data_volumes = attach(container)
+        mounted = [p for p in data_volumes if Path(p).name == 'OwnerData'] or data_volumes
+        if not mounted:
+            raise SystemExit('the container mounted no volume')
+        target = Path(mounted[0])
+        print(f'owner data volume {target}', flush=True)
 
         if source is not None and source.is_dir():
             print(f'copying the initial var tree of {source}', flush=True)
@@ -127,7 +122,7 @@ def main():
                         if name in dirs:
                             dirs.remove(name)
                     elif src.is_file():
-                        subprocess.run(['cp', '-p', str(src), str(dst)], check=True)
+                        shutil.copy2(src, dst)
                         count += 1
                         total += src.stat().st_size
         else:
@@ -142,23 +137,23 @@ def main():
         if os_dev:
             detach(os_dev)
 
-    data = base.read_bytes()
-    if len(data) != BASE_MIB * 1024**2 or data[32:36] != b'NXSB':
-        raise SystemExit('host formatting did not produce a raw APFS container')
+    with container.open('rb') as handle:
+        header = handle.read(4096)
+    if len(header) < 4096 or header[32:36] != b'NXSB':
+        raise SystemExit('host formatting did not produce an APFS container')
+    block_size = int.from_bytes(header[36:40], 'little')
+    blocks = int.from_bytes(header[40:48], 'little')
+    print(f'container {blocks * block_size} bytes, block size {block_size}', flush=True)
 
     sys.path.insert(0, str(args.unixnu / 'drivers/DarwinBoot/Test'))
     import packed_ramdisk
 
-    metadata = packed_ramdisk.pack(base, base_dbr)
-    print('packed base seed: ' + json.dumps(metadata, default=str), flush=True)
-
-    print(f'growing the container to {args.gib} GiB', flush=True)
-    (args.unixnu / 'build').mkdir(parents=True, exist_ok=True)   # seed-data-grow keeps its scratch there
-    run([sys.executable, args.unixnu / 'scripts/seed-data-grow.py',
-         '--gib', str(args.gib), base_dbr, args.output])
+    metadata = packed_ramdisk.pack(container, args.output)
+    print('packed seed: ' + json.dumps(metadata, default=str), flush=True)
 
     report = dict(output=str(args.output), bytes=args.output.stat().st_size, gib=args.gib,
-                  source_files=count, source_bytes=total)
+                  container_bytes=blocks * block_size, source_files=count,
+                  source_bytes=total, **{k: v for k, v in metadata.items() if k != 'packed'})
     (args.output.parent / 'data-seed.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2), flush=True)
 
