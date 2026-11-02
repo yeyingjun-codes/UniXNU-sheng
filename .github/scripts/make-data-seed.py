@@ -35,9 +35,10 @@ def sh(*args):
 
 
 def attach(image, mountpoint=None, readonly=False):
-    args = ['hdiutil', 'attach', '-noverify', '-noautofsck', '-plist']
+    args = ['hdiutil', 'attach']
     if readonly:
-        args.insert(1, '-readonly')
+        args.append('-readonly')
+    args += ['-noverify', '-noautofsck', '-plist']
     if mountpoint is not None:
         args += ['-mountpoint', str(mountpoint)]
     args.append(str(image))
