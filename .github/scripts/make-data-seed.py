@@ -17,6 +17,16 @@ from pathlib import Path
 
 IGNORED = {'staged_system_apps'}
 EXTRA_DIRS = ('keybags', 'mobile/tmp', 'tmp', 'run')
+SKELETON = (
+    'db', 'db/dslocal', 'db/dslocal/nodes', 'db/dslocal/nodes/Default',
+    'db/dslocal/nodes/Default/users', 'db/dslocal/nodes/Default/groups',
+    'db/dslocal/nodes/Default/config',
+    'containers', 'containers/Data', 'containers/Data/System',
+    'containers/Data/Application', 'containers/Shared', 'containers/Shared/SystemGroup',
+    'PersonaVolumes', 'preboot', 'root', 'Library',
+    'keybags/backup', 'mobile/Library/Preferences', 'mobile/Library/Caches',
+    'mobile/Library/Logs', 'mobile/Containers', 'mobile/Documents', 'mobile/Media',
+)
 BASE_MIB = 32
 
 
@@ -66,27 +76,30 @@ def main():
         if len(volumes) != 1:
             raise SystemExit(f'expected one mounted OS volume, saw {len(volumes)}')
         source = Path(volumes[0]['mount-point']) / 'private/var'
-        if not (source / 'db').is_dir():
-            raise SystemExit(f'{source} does not look like the OS initial var tree')
+        if not source.is_dir():
+            print(f'warning: {source} is absent; the seed keeps only the empty skeleton', flush=True)
 
         data_info, data_dev = attach(base)
         target = data_mount
         count = total = 0
-        for current, dirs, files in os.walk(source, followlinks=False):
-            dirs[:] = [name for name in dirs if name not in IGNORED]
-            dest = target / Path(current).relative_to(source)
-            dest.mkdir(parents=True, exist_ok=True)
-            os.chmod(dest, stat.S_IMODE(Path(current).stat().st_mode))
-            for name in list(dirs) + files:
-                src, dst = Path(current) / name, dest / name
-                if src.is_symlink():
-                    os.symlink(os.readlink(src), dst)
-                    if name in dirs:
-                        dirs.remove(name)
-                elif src.is_file():
-                    subprocess.run(['cp', '-p', str(src), str(dst)], check=True)
-                    count += 1
-                    total += src.stat().st_size
+        if source.is_dir():
+            for current, dirs, files in os.walk(source, followlinks=False):
+                dirs[:] = [name for name in dirs if name not in IGNORED]
+                dest = target / Path(current).relative_to(source)
+                dest.mkdir(parents=True, exist_ok=True)
+                os.chmod(dest, stat.S_IMODE(Path(current).stat().st_mode))
+                for name in list(dirs) + files:
+                    src, dst = Path(current) / name, dest / name
+                    if src.is_symlink():
+                        os.symlink(os.readlink(src), dst)
+                        if name in dirs:
+                            dirs.remove(name)
+                    elif src.is_file():
+                        subprocess.run(['cp', '-p', str(src), str(dst)], check=True)
+                        count += 1
+                        total += src.stat().st_size
+        for name in SKELETON:
+            (target / name).mkdir(parents=True, exist_ok=True)
         for name in EXTRA_DIRS:
             (target / name).mkdir(parents=True, exist_ok=True)
         os.chmod(target / 'tmp', 0o1777)
