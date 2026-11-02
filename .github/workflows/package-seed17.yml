@@ -97,6 +97,12 @@ jobs:
             "$os_dmg" "work/data.dbr" "UniXNU" --gib "$GIB"
           ls -la work
           df -h /
+      - name: storage ABI input
+        run: |
+          d=UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/tree/build/storage-abi
+          mkdir -p "$d"
+          cp device/.github/inputs/interface-audit.json "$d/interface-audit.json"
+          jq '{method_slots, live_native_4k, abstract_complete_destructors_trap, candidate_sha256}' "$d/interface-audit.json"
       - name: package
         working-directory: device
         env:
