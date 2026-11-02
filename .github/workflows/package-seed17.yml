@@ -71,6 +71,10 @@ jobs:
             echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
             exit 1
           fi
+      - uses: actions/cache@v4
+        with:
+          path: UniXNU/out/ipsw
+          key: ipsw-21H461-os-v1
       - name: deps
         working-directory: UniXNU
         run: |
