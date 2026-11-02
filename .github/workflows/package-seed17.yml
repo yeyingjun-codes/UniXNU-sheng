@@ -14,6 +14,8 @@ on:
         description: "Data container size in GiB"
         type: string
         default: "8"
+  push:
+    branches: [official-17]
 
 permissions:
   contents: read
@@ -76,7 +78,7 @@ jobs:
           ls -la out/ipsw/*/ | head -40
       - name: build the Data seed
         env:
-          GIB: ${{ inputs.gib }}
+          GIB: ${{ inputs.gib || '8' }}
         run: |
           set -euo pipefail
           os_dmg=$(ls -S UniXNU/out/ipsw/*/*.dmg | head -1)
