@@ -1,0 +1,125 @@
+name: package-17-seed
+
+# Official scripts/package.sh for the 17.7.11 profile, on macOS, for a device whose 17 defconfig
+# enables CONFIG_XNU_OWNER_DATA_MOUNT and therefore needs the Data seed the one-command flow does
+# not create. Everything except the seed is the untouched upstream flow: the same checkout layout,
+# the same tool set, the same --os 17 selection, no board or script change.
+# The seed is built from this OS build's own initial /private/var with the repository scripts
+# (packed_ramdisk + seed-data-grow), so the Data volume is the normal fresh-install skeleton.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gib:
+        description: "Data container size in GiB"
+        type: string
+        default: "8"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-17-seed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 474cfeeb4e35b3fc91ec98cd2bb54e1ab25389b8 # startup pipeline repair
+          path: UniXNU
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          submodules: recursive
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          {
+            echo "$HOME/.cargo/bin"
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+          } >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          ok=1
+          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool \
+                   mformat mcopy ipsw; do
+            command -v "$t" >/dev/null || { echo "missing tool: $t"; ok=0; }
+          done
+          for t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do
+            [ -f "/opt/homebrew/opt/llvm/bin/$t" ] || [ -f "/opt/homebrew/opt/lld/bin/$t" ] || { echo "missing tool: $t"; ok=0; }
+          done
+          [ "$ok" = 1 ]
+      - name: platform seed
+        env:
+          seed: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+        run: |
+          if ! [[ "$seed" =~ ^[0-9a-fA-F]{8}$ ]]; then
+            echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
+            exit 1
+          fi
+      - name: extract the OS volume
+        working-directory: UniXNU
+        run: |
+          ./unixnu ipsw fetch OS -D ../device --os 17
+          ls -la out/ipsw/*/ | head -40
+      - name: build the Data seed
+        env:
+          GIB: ${{ inputs.gib }}
+        run: |
+          set -euo pipefail
+          os_dmg=$(ls -S UniXNU/out/ipsw/*/*.dmg | head -1)
+          echo "OS volume: $os_dmg"
+          mkdir -p work
+          python3 device/.github/scripts/make-data-seed.py \
+            "$os_dmg" "work/data.dbr" "UniXNU" --gib "$GIB"
+          ls -la work
+          df -h /
+      - name: package
+        working-directory: device
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          seed="$PWD/../work/data.dbr"
+          test -f "$seed"
+          scripts/package.sh --os 17 --uefi ../uefi-sheng --data-ramdisk "$seed"
+      - name: manifest
+        if: always()
+        run: |
+          set +e
+          f=UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/package.manifest.json
+          jq '{profile, configuration, files: [.files[]? | {path, bytes, sha256}]}' "$f" 2>/dev/null | head -60
+          for j in UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/boot/boot.json \
+                   UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/payload/payload.json; do
+            echo "== $j"; cat "$j" 2>/dev/null | head -40
+          done
+          ls -la UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/*/ 2>/dev/null
+      - name: images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: images-17
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            UniXNU/out/sheng/*/*/boot/boot.img
+            UniXNU/out/sheng/*/*/boot/boot.json
+            UniXNU/out/sheng/*/*/payload/payload.img
+            UniXNU/out/sheng/*/*/payload/payload.json
+            UniXNU/out/sheng/*/*/kernel/kernel.macho
+            UniXNU/out/sheng/*/*/package.manifest.json
+            work/data.dbr
+            work/data-seed.json
+            UniXNU/out/sheng/*/*/logs/*.log
