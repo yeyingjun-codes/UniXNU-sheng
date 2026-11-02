@@ -1,0 +1,75 @@
+name: sheng-fd
+
+# Compile only the sheng firmware volume with the report patch and publish the FD. The boot image
+# is assembled on the workstation from this FD, the payload and the stock vendor_boot.
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: "patch script under .github/scripts"
+        type: string
+        default: "patch-ramdisk4.py"
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: macos-26
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 82b77cf775d52a0e52ea157939e6e18ddc088e29
+          path: UniXNU
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          submodules: recursive
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja bison pkgconf blacktop/tap/ipsw
+          {
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+          } >> "$GITHUB_PATH"
+      - name: patch
+        run: |
+          python3 "device/.github/scripts/${{ inputs.patch }}" UniXNU
+          grep -n 'Report ("report' UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c | head -20
+      - name: firmware
+        working-directory: UniXNU
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./unixnu fetch -D ../device --os 27
+          ./unixnu build firmware -D ../device --os 27 --uefi ../uefi-sheng
+          ls -la ../uefi-sheng/Build/shengPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd
+      - name: log
+        if: always()
+        run: |
+          set +e
+          find UniXNU/out/sheng -name 'firmware.log' -exec sh -c 'echo "== $1"; grep -c Building "$1"; grep -n UniXNURamDiskDxe "$1" | head -3' _ {} \;
+          exit 0
+      - name: publish fd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="fd-$(date +%Y%m%d-%H%M%S)"
+          cp uefi-sheng/Build/shengPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd "SILICIUM_UEFI-$tag.fd"
+          gh release create "$tag" "SILICIUM_UEFI-$tag.fd" \
+            --repo "$GITHUB_REPOSITORY" --title "$tag" \
+            --notes "sheng firmware volume built with the report patch" --latest
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size) \(.url)"'
