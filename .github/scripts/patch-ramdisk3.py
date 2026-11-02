@@ -166,22 +166,23 @@ source = source.replace(
       ((StartLength != 4) && (StartLength != 8)) || ((EndLength != 4) && (EndLength != 8)))
   {
     Say (L"UNIXNURAMDISK: /chosen has NO linux,initrd-start/end", 0, 0);
-    Say (L"UNIXNURAMDISK: reserve-map entries:", FdtNumRsvMap (Fdt), 0);
+    Say (L"UNIXNURAMDISK: reserve-map entries:", (UINT64)FdtGetNumberOfReserveMapEntries (Fdt), 0);
     {
-      UINT32  Index;
-      for (Index = 0; Index < FdtNumRsvMap (Fdt); Index++) {
-        CONST UINT64  *Entry;
-        UINT64        RsvStart;
-        UINT64        RsvEnd;
-        UINT64        Fat;
+      INTN  Index;
+      INTN  Count;
 
-        Entry = FdtGetRsvMap (Fdt, Index);
-        if (Entry == NULL) {
+      Count = FdtGetNumberOfReserveMapEntries (Fdt);
+      for (Index = 0; Index < Count; Index++) {
+        UINT64  RsvStart;
+        UINT64  RsvSize;
+        UINT64  RsvEnd;
+        UINT64  Fat;
+
+        if (FdtGetReserveMapEntry (Fdt, Index, &RsvStart, &RsvSize) != 0) {
           break;
         }
 
-        RsvStart = Fdt64ToCpu (Entry[0]);
-        RsvEnd   = RsvStart + Fdt64ToCpu (Entry[1]);
+        RsvEnd = RsvStart + RsvSize;
         Say (L"UNIXNURAMDISK: reserve", RsvStart, RsvEnd);
         if (RsvEnd <= RsvStart) {
           continue;
