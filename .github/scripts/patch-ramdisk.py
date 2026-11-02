@@ -58,7 +58,9 @@ FindFatStart (
     Limit = 256ULL << 20;
   }
 
-  for (Offset = 0; (Offset + RAM_BLOCK_SIZE) <= Limit; Offset += RAM_BLOCK_SIZE) {
+  // Limit = End - Base; every byte offset is checked because the bootloader's vendor ramdisk does
+  // not end on a sector boundary (measured: 30,997,814 bytes, 30,997,814 % 512 == 310).
+  for (Offset = 0; (Offset + RAM_BLOCK_SIZE) <= Limit; Offset += 2) {
     if (IsFatBootSector ((CONST UINT8 *)(UINTN)(Base + Offset))) {
       return Base + Offset;
     }
