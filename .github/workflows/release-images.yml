@@ -1,0 +1,118 @@
+name: release-images
+
+# Publish the sheng boot image set as a GitHub Release asset, which is a plain public
+# download URL (Actions artifacts require a signed-in session, so they 404 in a browser).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: "Run id whose images-console artifact to publish (empty = latest successful)"
+        type: string
+        default: "41431222671"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: fetch the artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ inputs.source_run }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n images-console -D out
+          find out -type f -printf '%p\t%s\n'
+      - name: unpack and repack as v3
+        run: |
+          set -euo pipefail
+          cd out
+          boot=$(find . -name boot.img | head -1)
+          echo "boot=$boot"
+          python3 - <<'PY'
+          import struct, zlib, pathlib, gzip
+          p = next(pathlib.Path('.').rglob('boot.img'))
+          d = p.read_bytes()
+          ks, ka, rs, ra, ss, sa, tags, page, hv, osv = struct.unpack_from('<10I', d, 8)
+          print('kernel', ks, 'ramdisk', rs, 'page', page, 'hv', hv)
+          kr = d[page:page+ks]
+          dec = zlib.decompressobj(31); blob = dec.decompress(kr); rest = dec.unused_data
+          member = ks - len(rest)
+          at = blob.find(b'_FVH')
+          print('shim', at-40, 'FD', len(blob)-(at-40), 'fdt', len(rest))
+          out = pathlib.Path('repack'); out.mkdir(exist_ok=True)
+          (out/'kernel.bin').write_bytes(kr[:member])
+          (out/'dtb.bin').write_bytes(rest)
+          off = page + ((ks + page - 1)//page)*page
+          (out/'payload.img').write_bytes(d[off:off+rs])
+          print('payload', rs)
+          PY
+      - name: mkbootimg v3
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check mkbootimg-official 2>/dev/null || true
+          python3 - <<'PY'
+          import struct, pathlib, subprocess, sys, textwrap
+          # mkbootimg is not packaged; assemble the v3 header directly (verified layout).
+          repack = pathlib.Path('out/repack')
+          kernel = (repack/'kernel.bin').read_bytes()
+          ramdisk = (repack/'payload.img').read_bytes()
+          dtb = (repack/'dtb.bin').read_bytes()
+          PAGE = 4096
+          cmdline = b''
+          def pad(b):
+              return b + b'\0' * ((PAGE - len(b) % PAGE) % PAGE)
+          header = bytearray()
+          header += b'ANDROID!'
+          header += struct.pack('<I', len(kernel))
+          header += struct.pack('<I', 0x00008000)
+          header += struct.pack('<I', len(ramdisk))
+          header += struct.pack('<I', 0x1000000)
+          header += struct.pack('<I', 0)              # second_size
+          header += struct.pack('<I', 0x00f00000)     # second_addr
+          header += struct.pack('<I', 0x1e00000)      # tags_addr
+          header += struct.pack('<I', PAGE)
+          header += struct.pack('<I', 3)              # header_version
+          header += struct.pack('<I', 0)              # os_version
+          header += b'\0' * 16                        # name
+          header += cmdline.ljust(1536, b'\0')        # v3 cmdline
+          header += struct.pack('<I', 1580)           # header_size
+          header += b'\0' * 4                         # reserved[0]
+          header += struct.pack('<Q', 0)              # reserved[1..]
+          header += b'\0' * 8
+          # v3 header is 1580 bytes; pad the first page
+          header = header.ljust(PAGE, b'\0')
+          image = bytes(header) + pad(kernel) + pad(ramdisk) + pad(dtb)
+          pathlib.Path('out/boot-v3.img').write_bytes(image)
+          print('boot-v3.img', len(image), 'kernel', len(kernel), 'ramdisk', len(ramdisk), 'dtb', len(dtb))
+          PY
+      - name: verify
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import struct, pathlib
+          d = pathlib.Path('out/boot-v3.img').read_bytes()
+          assert d[:8] == b'ANDROID!', d[:8]
+          hv = struct.unpack_from('<I', d, 40)[0]
+          ks = struct.unpack_from('<I', d, 8)[0]
+          print('magic ANDROID! header_version', hv, 'kernel', ks, 'total', len(d))
+          assert hv == 3
+          print('OK')
+          PY
+          ls -la out/boot-v3.img
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="sheng-$(date +%Y%m%d-%H%M%S)"
+          notes="sheng iPadOS 27 boot image (header v3, official macOS build, console-reporting firmware). Flash to boot_a with fastboot."
+          gh release create "$tag" out/boot-v3.img out/repack/payload.img \
+            --repo "$GITHUB_REPOSITORY" --title "$tag" --notes "$notes" --latest
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size) \(.url)"'
