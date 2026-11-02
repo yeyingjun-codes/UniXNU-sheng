@@ -75,8 +75,8 @@ jobs:
           fi
       - name: patch the ramdisk driver
         run: |
-          python3 device/.github/scripts/patch-ramdisk3.py UniXNU
-          grep -n 'Say (L"UNIXNURAMDISK' UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c | head -20
+          python3 device/.github/scripts/patch-ramdisk4.py UniXNU
+          grep -n 'Report ("report' UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c | head -20
       - name: package
         working-directory: device
         env:
