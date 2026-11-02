@@ -1,0 +1,112 @@
+name: sheng-27-report
+
+# The official package flow for this device, with one firmware fix: UniXNURamDiskDxe locates the
+# payload FAT inside the bootloader initrd instead of assuming it starts at linux,initrd-start.
+# Everything else is the untouched upstream flow (same checkouts, tools, --os selection, script).
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "OS profile of the images"
+        type: choice
+        options: ["27", "26", "17"]
+        default: "27"
+      init_data:
+        description: "Create a new installation Data seed when none is saved (27 only)"
+        type: boolean
+        default: true
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 474cfeeb4e35b3fc91ec98cd2bb54e1ab25389b8 # startup pipeline repair
+          path: UniXNU
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          submodules: recursive
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          {
+            echo "$HOME/.cargo/bin"
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+          } >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          ok=1
+          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool \
+                   mformat mcopy ipsw; do
+            command -v "$t" >/dev/null || { echo "missing tool: $t"; ok=0; }
+          done
+          for t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do
+            [ -f "/opt/homebrew/opt/llvm/bin/$t" ] || [ -f "/opt/homebrew/opt/lld/bin/$t" ] || { echo "missing tool: $t"; ok=0; }
+          done
+          [ "$ok" = 1 ]
+      - name: platform seed
+        env:
+          seed: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+        run: |
+          if ! [[ "$seed" =~ ^[0-9a-fA-F]{8}$ ]]; then
+            echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
+            exit 1
+          fi
+      - name: patch the ramdisk driver
+        run: |
+          python3 device/.github/scripts/patch-ramdisk3.py UniXNU
+          grep -n 'Say (L"UNIXNURAMDISK' UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c | head -20
+      - name: package
+        working-directory: device
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OS_PROFILE: ${{ inputs.os }}
+          INIT_DATA: ${{ inputs.init_data }}
+        run: |
+          args=(--os "${OS_PROFILE:-27}" --uefi ../uefi-sheng)
+          if [ "${OS_PROFILE:-27}" = 27 ] && [ "${INIT_DATA:-true}" = true ]; then
+            args+=(--init-data)
+          fi
+          scripts/package.sh "${args[@]}"
+      - name: manifest
+        if: always()
+        run: |
+          set +e
+          base=UniXNU/out/sheng
+          find "$base" -name package.manifest.json -maxdepth 4 | while read -r f; do
+            echo "== $f"; jq '{os_profile, configuration, outputs, runtime}' "$f"
+          done
+          find "$base" -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' | while read -r f; do
+            ls -la "$f"
+          done
+          exit 0
+      - name: images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheng-27-images
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            UniXNU/out/sheng/*/*/boot/boot.img
+            UniXNU/out/sheng/*/*/boot/boot.json
+            UniXNU/out/sheng/*/*/payload/payload.img
+            UniXNU/out/sheng/*/*/payload/payload.json
+            UniXNU/out/sheng/*/*/kernel/kernel.macho
+            UniXNU/out/sheng/*/*/package.manifest.json
+            UniXNU/out/sheng/*/*/runtime/data.dbr
