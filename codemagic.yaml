@@ -1,9 +1,10 @@
 workflows:
   sheng-firmware:
-    name: UniXNU sheng firmware (official recipe, Linux)
-    instance_type: linux_x2
+    name: UniXNU sheng firmware (official recipe, macOS)
+    instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
+      xcode: latest
       vars:
         UEFI_REPO: "https://github.com/UniXNU/uefi-sheng.git"
         UEFI_BRANCH: "sheng"
@@ -11,20 +12,22 @@ workflows:
         DEVICE_REPO: "https://github.com/UniXNU/UniXNU-sheng.git"
         WORK: "$HOME/work"
         BUILD_TARGET: "DEBUG"
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
       - name: Host toolchain
         script: |
           set -e
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            build-essential bison flex uuid-dev iasl nasm device-tree-compiler mtools \
-            clang lld llvm python3 python3-venv pkg-config libssl-dev git curl zip
-          sudo ln -sf /usr/lib/llvm-*/bin/lld-link /usr/local/bin/lld-link || true
-          sudo ln -sf /usr/lib/llvm-*/bin/llvm-lib /usr/local/bin/llvm-lib || true
-          sudo ln -sf /usr/lib/llvm-*/bin/llvm-rc  /usr/local/bin/llvm-rc  || true
-          for t in clang lld-link llvm-lib llvm-rc iasl nasm dtc mformat python3; do
-            printf '%-12s %s\n' "$t" "$(command -v $t || echo MISSING)"
+          brew install llvm lld dtc mtools nasm acpica 2>&1 | tail -5 || true
+          LLVM=$(brew --prefix llvm)
+          echo "LLVM_BIN=$LLVM/bin" >> $CM_ENV
+          for t in clang lld-link llvm-lib llvm-rc iasl nasm dtc mformat; do
+            p=$(command -v $t || true)
+            [ -z "$p" ] && [ -x "$LLVM/bin/$t" ] && p="$LLVM/bin/$t"
+            printf '%-12s %s\n' "$t" "${p:-MISSING}"
           done
+          sw_vers; uname -m
       - name: Checkout official sources
         script: |
           set -e
@@ -38,9 +41,18 @@ workflows:
           echo "unixnu      $(git -C unixnu rev-parse --short HEAD)"
           echo "device      $(git -C device rev-parse --short HEAD)"
           test -d uefi-sheng/Platforms/Xiaomi/shengPkg && echo "shengPkg present"
+          echo "WORK=$WORK" >> $CM_ENV
+      - name: Shallow submodules
+        script: |
+          set -e
+          cd "$WORK/unixnu"
+          git -c protocol.version=2 submodule update --init --recursive --depth 1 --jobs 8
+          cd "$WORK/device"
+          git -c protocol.version=2 submodule update --init --recursive --depth 1 --jobs 8 || true
       - name: Select device
         script: |
           set -e
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
           cd "$WORK/unixnu"
           export UNIXNU_DEVICE="$WORK/device"
           ./unixnu defconfig sheng_defconfig -D "$WORK/device"
@@ -48,15 +60,15 @@ workflows:
       - name: Build package and firmware
         script: |
           set -e
+          export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
           cd "$WORK/unixnu"
           export UNIXNU_DEVICE="$WORK/device"
           ./unixnu build package firmware --uefi "$WORK/uefi-sheng" \
-            --skip-preflight --target "$BUILD_TARGET" -j"$(nproc)"
+            --skip-preflight --target "$BUILD_TARGET" -j"$(sysctl -n hw.ncpu)"
       - name: Collect artifacts
         script: |
           set -e
           mkdir -p "$CM_BUILD_DIR/artifacts"
-          find "$WORK/uefi-sheng/Build" -name '*.fd' -printf '%s %p\n' 2>/dev/null || true
           find "$WORK/uefi-sheng/Build" -name '*.fd' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
           find "$WORK/unixnu/out" -name '*.log' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
           ls -la "$CM_BUILD_DIR/artifacts" || true
