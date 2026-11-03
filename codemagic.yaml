@@ -73,6 +73,7 @@ workflows:
             [ -f "$f" ] && cp "$f" "$CM_BUILD_DIR/artifacts/" 2>/dev/null
           done
           find "$WORK/uefi-sheng/Build" -name '*.fd' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null
+          find "$WORK/unixnu/out" -name 'sheng.dtb' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null
           ls -la "$CM_BUILD_DIR/artifacts" | tee -a "$CM_BUILD_DIR/artifacts/build.log"
           exit 0
       - name: Collect artifacts
@@ -81,7 +82,9 @@ workflows:
           mkdir -p "$CM_BUILD_DIR/artifacts"
           find "$WORK/uefi-sheng/Build" -name '*.fd' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
           find "$WORK/unixnu/out" -name '*.log' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
+          find "$WORK/unixnu/out" -name 'sheng.dtb' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
           ls -la "$CM_BUILD_DIR/artifacts" || true
     artifacts:
       - artifacts/*.fd
+      - artifacts/*.dtb
       - artifacts/*.log
