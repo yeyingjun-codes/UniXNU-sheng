@@ -65,7 +65,7 @@ workflows:
           export UNIXNU_DEVICE="$WORK/device"
           set +e
           ./unixnu build package firmware --uefi "$WORK/uefi-sheng" \
-            --skip-preflight --target "$BUILD_TARGET" -j"$(sysctl -n hw.ncpu)" \
+            --target "$BUILD_TARGET" -j"$(sysctl -n hw.ncpu)" \
             2>&1 | tee "$CM_BUILD_DIR/artifacts/build.log"
           rc=${PIPESTATUS[0]}
           echo "=== build rc=$rc ===" | tee -a "$CM_BUILD_DIR/artifacts/build.log"
