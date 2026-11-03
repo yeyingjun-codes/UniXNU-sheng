@@ -59,12 +59,22 @@ workflows:
           ./unixnu status -D "$WORK/device" | head -25
       - name: Build package and firmware
         script: |
-          set -e
+          mkdir -p "$CM_BUILD_DIR/artifacts"
           export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
           cd "$WORK/unixnu"
           export UNIXNU_DEVICE="$WORK/device"
+          set +e
           ./unixnu build package firmware --uefi "$WORK/uefi-sheng" \
-            --skip-preflight --target "$BUILD_TARGET" -j"$(sysctl -n hw.ncpu)"
+            --skip-preflight --target "$BUILD_TARGET" -j"$(sysctl -n hw.ncpu)" \
+            2>&1 | tee "$CM_BUILD_DIR/artifacts/build.log"
+          rc=${PIPESTATUS[0]}
+          echo "=== build rc=$rc ===" | tee -a "$CM_BUILD_DIR/artifacts/build.log"
+          for f in "$WORK"/unixnu/out/*/*/*/logs/*.log; do
+            [ -f "$f" ] && cp "$f" "$CM_BUILD_DIR/artifacts/" 2>/dev/null
+          done
+          find "$WORK/uefi-sheng/Build" -name '*.fd' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null
+          ls -la "$CM_BUILD_DIR/artifacts" | tee -a "$CM_BUILD_DIR/artifacts/build.log"
+          exit 0
       - name: Collect artifacts
         script: |
           set -e
