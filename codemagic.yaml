@@ -1,117 +1,65 @@
 workflows:
-  sheng-kernel:
-    name: Build sheng kernel (16Crow pipeline + owner mount stage probes)
+  sheng-firmware:
+    name: UniXNU sheng firmware (official recipe, Linux)
+    instance_type: linux_x2
     max_build_duration: 120
-    instance_type: mac_mini_m2
     environment:
-      xcode: latest
-      groups:
-        - github
       vars:
-        HOMEBREW_NO_AUTO_UPDATE: "1"
-        HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        HOMEBREW_NO_ENV_HINTS: "1"
+        UEFI_REPO: "https://github.com/UniXNU/uefi-sheng.git"
+        UEFI_BRANCH: "sheng"
+        DRIVER_REPO: "https://github.com/UniXNU/UniXNU.git"
+        DEVICE_REPO: "https://github.com/UniXNU/UniXNU-sheng.git"
+        WORK: "$HOME/work"
+        BUILD_TARGET: "DEBUG"
     scripts:
-      - name: Clone repos
+      - name: Host toolchain
         script: |
           set -e
-          echo "GITHUB_TOKEN=$GH_TOKEN" >> $CM_ENV
-          cd $CM_BUILD_DIR
-          git clone --depth 1 --recurse-submodules --branch sheng-evidence https://github.com/16Crow/UniXNU-official-build.git main
-          git clone --depth 1 --recurse-submodules https://github.com/16Crow/UniXNU-sheng.git device
-          cd main
-          chmod +x unixnu
-          echo "MAIN_DIR=$CM_BUILD_DIR/main" >> $CM_ENV
-          echo "DEVICE_DIR=$CM_BUILD_DIR/device" >> $CM_ENV
-          echo "UNIXNU_DEVICE=$CM_BUILD_DIR/device" >> $CM_ENV
-          echo "DEFCONFIG=sheng_defconfig" >> $CM_ENV
-          echo "STEPS=kernel" >> $CM_ENV
-      - name: Apply UFS poll cap + owner mount stage probes
-        script: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          # 1) UFS poll cap (as before)
-          for cand in ('main/drivers/NativeUfs/TransferPoll.h', 'device/drivers/ShengUfs/TransferPoll.h'):
-              p = Path(cand)
-              if p.exists():
-                  text = p.read_text()
-                  old = '    ++state.polls;\n'
-                  new = ('    ++state.polls;\n'
-                         '    if (state.polls > 1000000U) return UfsTransferEnd::Timeout;\n')
-                  if '1000000U' not in text:
-                      assert old in text, 'poll anchor missing'
-                      p.write_text(text.replace(old, new, 1))
-                  print('poll cap present in', cand)
-                  break
-
-          # 2) Owner mount stage probes: insert boot_progress_stage calls in the patch file
-          patch = Path('main/patches/xnu/offline-owner-systemos-mount.patch')
-          text = patch.read_text()
-          probes = [
-              ('+\tnative_owner_cache_stage = 1;\n', 'owner stage 1 root auth'),
-              ('+\tnative_owner_cache_stage = 2;\n', 'owner stage 2 device select'),
-              ('+\tnative_owner_cache_stage = 3;\n', 'owner stage 3 mount call'),
-              ('+\tnative_owner_cache_stage = 4;\n', 'owner stage 4 lookup'),
-              ('+\tnative_owner_cache_stage = 5;\n', 'owner stage 5 env'),
-              ('+\tnative_owner_cache_stage = 6;\n', 'owner stage 6 done'),
-          ]
-          count = 0
-          for anchor, msg in probes:
-              if anchor in text and f'"{msg}"' not in text:
-                  inject = anchor + '+\tboot_progress_stage("' + msg + '");\n'
-                  text = text.replace(anchor, inject, 1)
-                  count += 1
-          # Added diff lines require matching +newCount values in every hunk header.
-          lines = text.splitlines(keepends=True)
-          starts = [i for i, line in enumerate(lines) if line.startswith('@@ ')]
-          for pos, start in enumerate(starts):
-              end = starts[pos + 1] if pos + 1 < len(starts) else len(lines)
-              old_count = sum(line.startswith((' ', '-')) for line in lines[start + 1:end])
-              new_count = sum(line.startswith((' ', '+')) for line in lines[start + 1:end])
-              match = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@', lines[start])
-              assert match, 'unrecognized hunk header: ' + lines[start]
-              lines[start] = f'@@ -{match.group(1)},{old_count} +{match.group(2)},{new_count} @@' + lines[start].split('@@', 2)[2]
-          text = ''.join(lines)
-          patch.write_text(text)
-          print('owner stage probes inserted:', count)
-          print('hunk headers recalculated:', len(starts))
-          assert count >= 4, 'expected at least 4 stage anchors'
-          PY
-      - name: Install host tools
-        script: |
-          set -e
-          brew install llvm lld mtools dtc qemu unifdef cmake ninja
-          echo "PATH=$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" >> $CM_ENV
-      - name: Verify tools
-        script: |
-          cd $MAIN_DIR
-          sw_vers
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          for t in git make clang cmake ninja unifdef ld.lld mformat mcopy dtc qemu-system-aarch64 shasum; do
-            echo "$t=$(command -v $t || echo MISSING)"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential bison flex uuid-dev iasl nasm device-tree-compiler mtools \
+            clang lld llvm python3 python3-venv pkg-config libssl-dev git curl zip
+          sudo ln -sf /usr/lib/llvm-*/bin/lld-link /usr/local/bin/lld-link || true
+          sudo ln -sf /usr/lib/llvm-*/bin/llvm-lib /usr/local/bin/llvm-lib || true
+          sudo ln -sf /usr/lib/llvm-*/bin/llvm-rc  /usr/local/bin/llvm-rc  || true
+          for t in clang lld-link llvm-lib llvm-rc iasl nasm dtc mformat python3; do
+            printf '%-12s %s\n' "$t" "$(command -v $t || echo MISSING)"
           done
+      - name: Checkout official sources
+        script: |
+          set -e
+          mkdir -p "$WORK"; cd "$WORK"
+          rm -rf uefi-sheng unixnu device
+          git clone --depth 1 --single-branch --branch "$UEFI_BRANCH" "$UEFI_REPO" uefi-sheng
+          git clone --depth 1 --single-branch "$DRIVER_REPO" unixnu
+          git clone --depth 1 --single-branch "$DEVICE_REPO" device
+          chmod +x unixnu/unixnu
+          echo "uefi-sheng  $(git -C uefi-sheng rev-parse --short HEAD)"
+          echo "unixnu      $(git -C unixnu rev-parse --short HEAD)"
+          echo "device      $(git -C device rev-parse --short HEAD)"
+          test -d uefi-sheng/Platforms/Xiaomi/shengPkg && echo "shengPkg present"
       - name: Select device
         script: |
-          cd $MAIN_DIR
-          ./unixnu defconfig "$DEFCONFIG"
-      - name: Prepare evidence and build kernel
+          set -e
+          cd "$WORK/unixnu"
+          export UNIXNU_DEVICE="$WORK/device"
+          ./unixnu defconfig sheng_defconfig -D "$WORK/device"
+          ./unixnu status -D "$WORK/device" | head -25
+      - name: Build package and firmware
         script: |
-          set -euo pipefail
-          cd $MAIN_DIR
-          export GITHUB_TOKEN=$GH_TOKEN
-          export UNIXNU_DEVICE=$DEVICE_DIR
-          export STEPS=kernel
-          export DEFCONFIG=sheng_defconfig
-          bash scripts/prepare-sheng-evidence.sh
-          echo "=== PIPELINE DONE ==="
-          ls -lh out/sheng/kernel/
-          shasum -a 256 out/sheng/kernel/kernel.macho
-          shasum -a 256 out/sheng/kernel/kernel.json
+          set -e
+          cd "$WORK/unixnu"
+          export UNIXNU_DEVICE="$WORK/device"
+          ./unixnu build package firmware --uefi "$WORK/uefi-sheng" \
+            --skip-preflight --target "$BUILD_TARGET" -j"$(nproc)"
+      - name: Collect artifacts
+        script: |
+          set -e
+          mkdir -p "$CM_BUILD_DIR/artifacts"
+          find "$WORK/uefi-sheng/Build" -name '*.fd' -printf '%s %p\n' 2>/dev/null || true
+          find "$WORK/uefi-sheng/Build" -name '*.fd' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
+          find "$WORK/unixnu/out" -name '*.log' -exec cp {} "$CM_BUILD_DIR/artifacts/" \; 2>/dev/null || true
+          ls -la "$CM_BUILD_DIR/artifacts" || true
     artifacts:
-      - main/out/sheng/kernel/kernel.macho
-      - main/out/sheng/kernel/kernel.json
-      - main/out/sheng/logs/*.log
+      - artifacts/*.fd
+      - artifacts/*.log
