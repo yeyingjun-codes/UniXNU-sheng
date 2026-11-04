@@ -257,9 +257,9 @@ workflows:
           import sys
 
           root = pathlib.Path(sys.argv[1])
-          scripts = root / "UniXNU" / "scripts"
-          if not scripts.is_dir():
-              sys.exit("the UniXNU scripts directory is missing: %s" % scripts)
+          # The display board scripts live in the device repository (device/scripts); keep the
+          # UniXNU checkout as a fallback so this step does not depend on the layout du jour.
+          script_dirs = [root / "device" / "scripts", root / "UniXNU" / "scripts"]
 
           NL = chr(10)
 
@@ -294,28 +294,33 @@ workflows:
           ])
 
           patched = 0
-          for path in sorted(scripts.glob("build-gop-legacy-display*.py")):
-              text = path.read_text()
-              if "WifiFirmware.c" in text:
-                  print("already compiles WifiFirmware.c:", path.name)
-                  patched += 1
+          seen = []
+          for scripts in script_dirs:
+              if not scripts.is_dir():
                   continue
-              if text.count(anchor27) == 1:
-                  path.write_text(text.replace(anchor27, inject27 + anchor27, 1))
-                  print("patched (27 layout):", path.name)
-                  patched += 1
-              elif text.count(anchor17) == 1:
-                  path.write_text(text.replace(anchor17, replacement17, 1))
-                  print("patched (17 layout):", path.name)
-                  patched += 1
-              else:
-                  sys.exit("no known anchor in %s (27-style %d, 17-style %d)"
-                           % (path.name, text.count(anchor27), text.count(anchor17)))
+              for path in sorted(scripts.glob("build-gop-legacy-display*.py")):
+                  seen.append(str(path))
+                  text = path.read_text()
+                  if "WifiFirmware.c" in text:
+                      print("already compiles WifiFirmware.c:", path)
+                      patched += 1
+                      continue
+                  if text.count(anchor27) == 1:
+                      path.write_text(text.replace(anchor27, inject27 + anchor27, 1))
+                      print("patched (27 layout):", path)
+                      patched += 1
+                  elif text.count(anchor17) == 1:
+                      path.write_text(text.replace(anchor17, replacement17, 1))
+                      print("patched (17 layout):", path)
+                      patched += 1
+                  else:
+                      sys.exit("no known anchor in %s (27-style %d, 17-style %d)"
+                               % (path, text.count(anchor27), text.count(anchor17)))
 
           if not patched:
-              sys.exit("no build-gop-legacy-display*.py under %s" % scripts)
+              sys.exit("no build-gop-legacy-display*.py found; looked in %s" % seen)
           PY
-          grep -rn "WifiFirmware" "$ROOT"/UniXNU/scripts/build-gop-legacy-display*.py
+          grep -rn "WifiFirmware" "$ROOT"/device/scripts/build-gop-legacy-display*.py
 
       - name: Select header_version 3 and fix the bootimg verify offset
         script: |
