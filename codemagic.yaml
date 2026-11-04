@@ -205,6 +205,49 @@ workflows:
           print('patches normalized:', fixed)
           PY
 
+      - name: Prepare driver source checkouts in non-cone sparse mode
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 - "$ROOT" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          drivers = pathlib.Path(sys.argv[1]) / "device" / "drivers"
+          locks = sorted(drivers.glob("*/tools/source-lock.json"))
+          print("source locks:", [str(p) for p in locks])
+          for lock_path in locks:
+              lock = json.loads(lock_path.read_text())
+              base = lock_path.parents[1]
+              for name in ("linux", "freebsd"):
+                  src = lock.get(name)
+                  if not src:
+                      continue
+                  dest = base / "deps" / name
+                  if not dest.exists():
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      cmd = ["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse"]
+                      if src.get("ref"):
+                          cmd += ["--branch", src["ref"]]
+                      cmd += [src["url"], str(dest)]
+                      print("clone", name, src.get("ref"), src["url"])
+                      subprocess.run(cmd, check=True)
+                  subprocess.run(["git", "-C", str(dest), "config", "core.sparseCheckoutCone", "false"], check=True)
+                  subprocess.run(["git", "-C", str(dest), "sparse-checkout", "set", "--no-cone", *src["paths"]], check=True)
+                  head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"],
+                                        capture_output=True, text=True).stdout.strip()
+                  missing = [p for p in src.get("required", []) if not (dest / p).is_file()]
+                  print(name, "revision", head, "expect", src.get("commit"), "missing", len(missing))
+                  if head != src.get("commit"):
+                      sys.exit("%s: revision %s != locked %s" % (name, head, src.get("commit")))
+                  if missing:
+                      print("missing sample:", missing[:5])
+                      sys.exit("%s: %d required files missing" % (name, len(missing)))
+          print("driver sources ready")
+          PY
+
       - name: Build package 27 with first-install Data seed
         script: |
           set -o pipefail
