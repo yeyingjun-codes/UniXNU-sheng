@@ -265,8 +265,10 @@ workflows:
               if text.count(anchor) != 1:
                   sys.exit("anchor not found exactly once: %d" % text.count(anchor))
               inject = (
-                  "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c).\n"
-                  "compile_c(ROOT / 'package/WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
+                  "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).\n"
+                  "if not (KITS / 'WifiFirmware.c').exists():\n"
+                  "    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())\n"
+                  "compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
                   "board_objects.append(board_dir / 'WifiFirmware.o')\n"
               )
               p.write_text(text.replace(anchor, inject + anchor))
