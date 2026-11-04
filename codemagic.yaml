@@ -248,6 +248,31 @@ workflows:
           print("driver sources ready")
           PY
 
+      - name: Patch 27 board link to compile the WiFi firmware loader
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 - "$ROOT" <<'PY'
+          import pathlib
+          import sys
+
+          p = pathlib.Path(sys.argv[1]) / "device" / "scripts" / "build-gop-legacy-display-27.py"
+          text = p.read_text()
+          anchor = "board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'"
+          if "package/WifiFirmware.c" in text:
+              print("already compiles WifiFirmware.c")
+          else:
+              if text.count(anchor) != 1:
+                  sys.exit("anchor not found exactly once: %d" % text.count(anchor))
+              inject = (
+                  "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c).\n"
+                  "compile_c(ROOT / 'package/WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
+                  "board_objects.append(board_dir / 'WifiFirmware.o')\n"
+              )
+              p.write_text(text.replace(anchor, inject + anchor))
+              print("patched", p)
+          PY
+
       - name: Build package 27 with first-install Data seed
         script: |
           set -o pipefail
