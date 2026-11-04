@@ -88,3 +88,99 @@ workflows:
       - artifacts/*.fd
       - artifacts/*.dtb
       - artifacts/*.log
+
+  sheng-package27:
+    name: UniXNU sheng package 27 (official full build + first-install seed)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: latest
+      groups:
+        - github
+      vars:
+        REPO_UNIXNU: "https://github.com/UniXNU/UniXNU.git"
+        REPO_DEVICE: "https://github.com/UniXNU/UniXNU-sheng.git"
+        REPO_UEFI: "https://github.com/UniXNU/uefi-sheng.git"
+        UNIXNU_REF: "f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63"
+        UNIXNU_UNIQUE_CHIP_ID: "9732b499"
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        HOMEBREW_NO_ENV_HINTS: "1"
+    scripts:
+      - name: Host toolchain
+        script: |
+          set -euo pipefail
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw python@3.12 2>&1 | tail -20
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          echo "PY312=$(brew --prefix python@3.12)/bin" >> $CM_ENV
+          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool mformat mcopy ipsw; do
+            command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }
+          done
+          "$(brew --prefix python@3.12)/bin/python3" -c 'import tomllib,sys; print(sys.version)'
+          for t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do
+            [ -x "$(brew --prefix llvm)/bin/$t" ] || [ -x "$(brew --prefix lld)/bin/$t" ] || { echo "missing tool: $t"; exit 1; }
+          done
+          sw_vers; xcodebuild -version; uname -m
+
+      - name: Checkout official sources at pinned revisions
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+          cd "$ROOT"
+
+          git init UniXNU
+          git -C UniXNU remote add origin "$REPO_UNIXNU"
+          git -C UniXNU fetch --depth 1 origin "$UNIXNU_REF"
+          git -C UniXNU checkout --detach FETCH_HEAD
+          git -C UniXNU submodule update --init --recursive --depth 1 --jobs 8
+
+          git clone --depth 1 --single-branch --branch main "$REPO_DEVICE" device
+          git -C device submodule update --init --recursive --depth 1 --jobs 8
+
+          git clone --depth 1 --single-branch --branch sheng "$REPO_UEFI" uefi-sheng
+          git -C uefi-sheng submodule update --init --recursive --depth 1 --jobs 8
+
+          echo "UniXNU  $(git -C UniXNU rev-parse HEAD)"
+          echo "device  $(git -C device rev-parse HEAD)"
+          echo "uefi    $(git -C uefi-sheng rev-parse HEAD)"
+          test -d uefi-sheng/Platforms/Xiaomi/shengPkg
+          test -f device/scripts/package.sh
+
+      - name: Build package 27 with first-install Data seed
+        script: |
+          set -o pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          export PATH="$(brew --prefix python@3.12)/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
+          export UNIXNU_UNIQUE_CHIP_ID="9732b499"
+          export GITHUB_TOKEN="${GH_TOKEN:-}"
+          cd "$ROOT/device"
+          set +e
+          scripts/package.sh --os 27 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package27.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "=== package rc=$rc ==="
+          exit "$rc"
+
+      - name: Collect images and Data seed
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          OUT="$CM_BUILD_DIR/out27"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          cp "$CM_BUILD_DIR/package27.log" "$OUT/" || true
+
+          BASE="$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446"
+          find "$BASE" -type f \( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \) -exec cp {} "$OUT/" \; 2>/dev/null || true
+          find "$ROOT/UniXNU/out/sheng" -type f -name 'sheng.dtb' -exec cp {} "$OUT/" \; 2>/dev/null || true
+
+          cd "$OUT"
+          ls -lh
+          shasum -a 256 boot.img payload.img kernel.macho data.dbr 2>/dev/null || true
+          for f in boot.img payload.img data.dbr package.manifest.json; do
+            [ -f "$f" ] || echo "MISSING $f"
+          done
+
+    artifacts:
+      - out27/*
