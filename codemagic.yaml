@@ -112,6 +112,9 @@ workflows:
           set -euo pipefail
           brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup 2>&1 | tail -20
           rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          rustup default 1.98.0
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo --version && rustc --version
           mkdir -p "$HOME/.local/bin"
           curl -fL --retry 3 -o /tmp/ipsw.tar.gz https://github.com/blacktop/ipsw/releases/download/v3.1.741/ipsw_3.1.741_macOS_arm64.tar.gz
           tar -xzf /tmp/ipsw.tar.gz -C "$HOME/.local/bin"
@@ -119,7 +122,7 @@ workflows:
           export PATH="$HOME/.local/bin:$PATH"
           echo "IPSW_BIN=$HOME/.local/bin" >> $CM_ENV
           ipsw version
-          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool mformat mcopy ipsw; do
+          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool mformat mcopy ipsw cargo rustc; do
             command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }
           done
           python3 -c 'import tomllib,sys; print(sys.version)'
@@ -197,7 +200,8 @@ workflows:
         script: |
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
-          export PATH="$HOME/.local/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
+          echo "cargo: $(command -v cargo) $(cargo --version 2>&1)"
           export UNIXNU_UNIQUE_CHIP_ID="9732b499"
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
