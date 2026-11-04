@@ -402,7 +402,7 @@ workflows:
           python3 /tmp/apply_ramdisk.py "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
           grep -n "FindFatBootSector" "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
 
-      - name: Build the ipados 17.7.11 package with first-install Data seed
+      - name: Build the ipados 17.7.11 package with the packed Data seed
         script: |
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
@@ -412,7 +412,11 @@ workflows:
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
           set +e
-          scripts/package.sh --os 17 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package17.log"
+          SEED="$CM_BUILD_DIR/ci/data-seed.dbr"
+          if [ ! -f "$SEED" ]; then echo "FATAL: the packed Data seed is missing: $SEED"; exit 1; fi
+          ls -l "$SEED"
+          scripts/package.sh --os 17 --uefi "$ROOT/uefi-sheng" \
+            --data-ramdisk "$SEED" 2>&1 | tee "$CM_BUILD_DIR/package17.log"
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== package rc=$rc ==="
