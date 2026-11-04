@@ -110,20 +110,19 @@ workflows:
       - name: Host toolchain
         script: |
           set -euo pipefail
-          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup python@3.12 2>&1 | tail -20
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup 2>&1 | tail -20
           rustup toolchain install 1.98.0 --profile minimal --component rust-src
           mkdir -p "$HOME/.local/bin"
           curl -fL --retry 3 -o /tmp/ipsw.tar.gz https://github.com/blacktop/ipsw/releases/download/v3.1.741/ipsw_3.1.741_macOS_arm64.tar.gz
           tar -xzf /tmp/ipsw.tar.gz -C "$HOME/.local/bin"
           chmod +x "$HOME/.local/bin/ipsw"
-          export PATH="$HOME/.local/bin:$(brew --prefix python@3.12)/bin:$PATH"
-          echo "PY312=$(brew --prefix python@3.12)/bin" >> $CM_ENV
+          export PATH="$HOME/.local/bin:$PATH"
           echo "IPSW_BIN=$HOME/.local/bin" >> $CM_ENV
           ipsw version
           for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool mformat mcopy ipsw; do
             command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }
           done
-          "$(brew --prefix python@3.12)/bin/python3" -c 'import tomllib,sys; print(sys.version)'
+          python3 -c 'import tomllib,sys; print(sys.version)'
           for t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do
             [ -x "$(brew --prefix llvm)/bin/$t" ] || [ -x "$(brew --prefix lld)/bin/$t" ] || { echo "missing tool: $t"; exit 1; }
           done
@@ -159,7 +158,7 @@ workflows:
         script: |
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
-          export PATH="$HOME/.local/bin:$(brew --prefix python@3.12)/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
+          export PATH="$HOME/.local/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
           export UNIXNU_UNIQUE_CHIP_ID="9732b499"
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
