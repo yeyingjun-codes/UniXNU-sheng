@@ -111,10 +111,21 @@ workflows:
         script: |
           set -euo pipefail
           brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup 2>&1 | tail -20
-          rustup toolchain install 1.98.0 --profile minimal --component rust-src
-          rustup default 1.98.0
+          RUSTUP_BIN="$(command -v rustup || true)"
+          [ -n "$RUSTUP_BIN" ] || RUSTUP_BIN="$(brew --prefix rustup)/bin/rustup"
+          echo "rustup: $RUSTUP_BIN"
+          "$RUSTUP_BIN" toolchain install 1.98.0 --profile minimal --component rust-src
+          "$RUSTUP_BIN" default 1.98.0
+          mkdir -p "$HOME/.cargo/bin"
+          for proxy in cargo rustc rustdoc rustup cargo-clippy clippy-driver rustfmt; do
+            ln -sf "$RUSTUP_BIN" "$HOME/.cargo/bin/$proxy"
+          done
           export PATH="$HOME/.cargo/bin:$PATH"
-          cargo --version && rustc --version
+          echo "cargo: $(command -v cargo)"
+          cargo --version
+          cargo +1.98.0 --version
+          rustc +1.98.0 --version
+          llvm-as --version 2>/dev/null | head -1 || "$(brew --prefix llvm)/bin/llvm-as" --version | head -1
           mkdir -p "$HOME/.local/bin"
           curl -fL --retry 3 -o /tmp/ipsw.tar.gz https://github.com/blacktop/ipsw/releases/download/v3.1.741/ipsw_3.1.741_macOS_arm64.tar.gz
           tar -xzf /tmp/ipsw.tar.gz -C "$HOME/.local/bin"
