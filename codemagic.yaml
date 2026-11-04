@@ -294,6 +294,13 @@ workflows:
           PY
           grep -n -A3 'bootimg"."image' "$ROOT/device/board.toml"
 
+      - name: Add UniXNU probe logging
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 "$ROOT/device/ci/apply_probe.py" "$ROOT/UniXNU/package/UniXNUPkg/Library/UniXNULib/Config.c"
+          grep -n "probe: blockio\|probe: volume" "$ROOT/UniXNU/package/UniXNUPkg/Library/UniXNULib/Config.c"
+
       - name: Build package 27 with first-install Data seed
         script: |
           set -o pipefail
