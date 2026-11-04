@@ -154,6 +154,45 @@ workflows:
           test -d uefi-sheng/Platforms/Xiaomi/shengPkg
           test -f device/scripts/package.sh
 
+      - name: Normalize upstream patch headers
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 - "$ROOT" <<'PY'
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          fixed = 0
+          for p in sorted(root.rglob('*.patch')):
+              raw = p.read_bytes().decode('utf-8', 'surrogateescape')
+              lines = raw.splitlines(keepends=True)
+              out = []
+              changed = False
+              for i, line in enumerate(lines):
+                  out.append(line)
+                  if not line.startswith('diff --git '):
+                      continue
+                  has_new_mode = False
+                  dash = None
+                  for k in range(i + 1, min(i + 12, len(lines))):
+                      s = lines[k]
+                      if s.startswith('new file mode'):
+                          has_new_mode = True
+                          break
+                      if s.startswith('--- '):
+                          dash = s.strip()
+                          break
+                  if dash == '--- /dev/null' and not has_new_mode:
+                      out.append('new file mode 100644\n')
+                      changed = True
+              if changed:
+                  p.write_bytes(''.join(out).encode('utf-8', 'surrogateescape'))
+                  print('normalized', p)
+                  fixed += 1
+          print('patches normalized:', fixed)
+          PY
+
       - name: Build package 27 with first-install Data seed
         script: |
           set -o pipefail
