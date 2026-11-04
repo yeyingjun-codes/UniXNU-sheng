@@ -248,7 +248,7 @@ workflows:
           print("driver sources ready")
           PY
 
-      - name: Patch 27 board link to compile the WiFi firmware loader
+      - name: Compile the WiFi firmware loader into the display board link
         script: |
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
@@ -256,24 +256,56 @@ workflows:
           import pathlib
           import sys
 
-          p = pathlib.Path(sys.argv[1]) / "device" / "scripts" / "build-gop-legacy-display-27.py"
-          text = p.read_text()
-          anchor = "board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'"
-          if "package/WifiFirmware.c" in text:
-              print("already compiles WifiFirmware.c")
-          else:
-              if text.count(anchor) != 1:
-                  sys.exit("anchor not found exactly once: %d" % text.count(anchor))
-              inject = (
-                  "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).\n"
-                  "if not (KITS / 'WifiFirmware.c').exists():\n"
-                  "    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())\n"
-                  "compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
-                  "board_objects.append(board_dir / 'WifiFirmware.o')\n"
-              )
-              p.write_text(text.replace(anchor, inject + anchor))
-              print("patched", p)
+          root = pathlib.Path(sys.argv[1])
+          scripts = root / "UniXNU" / "scripts"
+          device_src = root / "device" / "package" / "WifiFirmware.c"
+          kits = root / "UniXNU" / "kits" / "sheng"
+
+          if not device_src.is_file():
+              sys.exit("WifiFirmware.c is missing from the device repository: %s" % device_src)
+          if not kits.is_dir():
+              sys.exit("kits/sheng is missing from the UniXNU checkout: %s" % kits)
+
+          staged = kits / "WifiFirmware.c"
+          staged.write_bytes(device_src.read_bytes())
+          print("staged", staged)
+
+          # ipados-27 style: the display script keeps a board object list.
+          anchor27 = "board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'"
+          inject27 = (
+              "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).\n"
+              "if not (KITS / 'WifiFirmware.c').exists():\n"
+              "    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())\n"
+              "compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
+              "board_objects.append(board_dir / 'WifiFirmware.o')\n"
+          )
+          # ipados-17 style: plain C sources are listed explicitly and all of them join the archive.
+          anchor17 = "backlight_c=[ROOT/'kits/sheng/GeniI2c.c']"
+          replacement17 = "backlight_c=[ROOT/'kits/sheng/GeniI2c.c',ROOT/'kits/sheng/WifiFirmware.c']"
+
+          patched = 0
+          for path in sorted(scripts.glob("build-gop-legacy-display*.py")):
+              text = path.read_text()
+              if "WifiFirmware.c" in text:
+                  print("already compiles WifiFirmware.c:", path.name)
+                  patched += 1
+                  continue
+              if text.count(anchor27) == 1:
+                  path.write_text(text.replace(anchor27, inject27 + anchor27, 1))
+                  print("patched (27 layout):", path.name)
+                  patched += 1
+              elif text.count(anchor17) == 1:
+                  path.write_text(text.replace(anchor17, replacement17, 1))
+                  print("patched (17 layout):", path.name)
+                  patched += 1
+              else:
+                  sys.exit("no known anchor in %s (27-style %d, 17-style %d)"
+                           % (path.name, text.count(anchor27), text.count(anchor17)))
+
+          if not patched:
+              sys.exit("no build-gop-legacy-display*.py found under %s" % scripts)
           PY
+          grep -rn "WifiFirmware" "$ROOT/UniXNU/scripts/"build-gop-legacy-display*.py
 
       - name: Select header_version 3 and fix the bootimg verify offset
         script: |
@@ -296,6 +328,47 @@ workflows:
           grep -n -A3 'bootimg"."image' "$ROOT/device/board.toml"
           python3 /tmp/fix_verify.py "$ROOT/UniXNU/scripts/unixnu/bootimg.py"
 
+      - name: Fit the payload into the 192 MiB boot partition
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 - "$ROOT" <<'PY'
+          import sys
+          from pathlib import Path
+
+          # The ipados-17.7.11 override asks for a 208 MiB payload. Packed as the boot image
+          # ramdisk that is larger than boot_b (0xC000000 = 192 MiB), so the flash would be
+          # refused. 176 MiB is what the 27 image already used and it fits with room to spare.
+          p = Path(sys.argv[1]) / "device" / "board.toml"
+          lines = p.read_text().splitlines(True)
+          header = '["os_overrides"."ipados-17.7.11-21H461"."payload"]'
+
+          start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
+          if start is None:
+              sys.exit("board.toml has no %s table" % header)
+
+          i = start + 1
+          replaced = False
+          while i < len(lines):
+              stripped = lines[i].strip()
+              if stripped.startswith("["):
+                  break
+              if stripped.startswith('"size_mib"'):
+                  lines[i] = '"size_mib" = 176\n'
+                  replaced = True
+                  break
+              i += 1
+
+          # The override inherits [payload] size_mib when the block has no entry of its own.
+          if not replaced:
+              lines.insert(start + 1, '"size_mib" = 176\n')
+
+          p.write_text("".join(lines))
+          print("ipados-17.7.11 payload size is now 176 MiB")
+          print("".join(lines[start:start + 3]))
+          PY
+          grep -n '"size_mib"' "$ROOT/device/board.toml"
+
       - name: Add UniXNU probe logging
         script: |
           set -euo pipefail
@@ -312,7 +385,7 @@ workflows:
           python3 /tmp/apply_ramdisk.py "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
           grep -n "FindFatBootSector" "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
 
-      - name: Build package 27 with first-install Data seed
+      - name: Build the ipados 17.7.11 package with first-install Data seed
         script: |
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
@@ -322,7 +395,7 @@ workflows:
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
           set +e
-          scripts/package.sh --os 27 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package27.log"
+          scripts/package.sh --os 17 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package17.log"
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== package rc=$rc ==="
@@ -334,9 +407,9 @@ workflows:
           ROOT="$CM_BUILD_DIR/pkg27"
           OUT="$CM_BUILD_DIR/out27"
           rm -rf "$OUT"; mkdir -p "$OUT"
-          cp "$CM_BUILD_DIR/package27.log" "$OUT/" || true
+          cp "$CM_BUILD_DIR/package17.log" "$OUT/" || true
 
-          BASE="$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446"
+          BASE="$ROOT/UniXNU/out/sheng/ipados-17.7.11-21H461"
           find "$BASE" -type f \( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \) -exec cp {} "$OUT/" \; 2>/dev/null || true
           find "$ROOT/UniXNU/out/sheng" -type f -name 'sheng.dtb' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
