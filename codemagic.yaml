@@ -343,6 +343,51 @@ workflows:
           grep -n -A3 'bootimg"."image' "$ROOT/device/board.toml"
           python3 /tmp/fix_verify.py "$ROOT/UniXNU/scripts/unixnu/bootimg.py"
 
+      - name: Insert the storage interface audit into the 17 kernel archives
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 - "$ROOT" <<'PY'
+          import sys
+          from pathlib import Path
+
+          # build-virtio-mmio-bindings.py reads build/storage-abi/interface-audit.json, which
+          # scripts/audit-storage-interface.py produces. The ipados-17.7.11 archive list predates
+          # that dependency (the 26 and 27 profiles build no virtio bindings, so they never hit
+          # it). The audit runs after the compile-record bootstrap pass and the storage headers
+          # that the kernel step already prepares, so its inputs exist by this point.
+          NL = chr(10)
+          header = '["os_overrides"."ipados-17.7.11-21H461"."kernel"]'
+          needle = '"build-virtio-mmio-bindings.py'
+          audit = '"audit-storage-interface.py", '
+
+          p = Path(sys.argv[1]) / "device" / "board.toml"
+          lines = p.read_text().splitlines(True)
+          start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
+          if start is None:
+              sys.exit("board.toml has no %s table" % header)
+
+          end = len(lines)
+          for i in range(start + 1, len(lines)):
+              if lines[i].strip().startswith("["):
+                  end = i
+                  break
+
+          block = "".join(lines[start:end])
+          if "audit-storage-interface.py" in block:
+              print("the 17 archives already run the storage interface audit")
+          else:
+              at = block.find(needle)
+              if at < 0:
+                  sys.exit("no virtio bindings entry in the 17 archives")
+              lines[start:end] = [block[:at] + audit + block[at:]]
+              p.write_text("".join(lines))
+              print("inserted audit-storage-interface.py before the virtio bindings")
+
+          print("".join(lines[start:end]).strip()[:400])
+          PY
+          grep -n "audit-storage-interface" "$ROOT/device/board.toml"
+
       - name: Fit the payload into the 192 MiB boot partition
         script: |
           set -euo pipefail
