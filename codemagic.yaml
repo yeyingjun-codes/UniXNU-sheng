@@ -437,6 +437,20 @@ workflows:
           PY
           grep -n '"size_mib"' "$ROOT/device/board.toml"
 
+      - name: Install the read-only process and UI probe
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          SRC="$CM_BUILD_DIR/ci/NativeUfs.probe15.cpp"
+          DST="$ROOT/device/drivers/ShengUfs/NativeUfs.cpp"
+          test -f "$SRC"
+          test -f "$DST"
+          cp "$DST" "$CM_BUILD_DIR/NativeUfs.before-probe15.cpp"
+          cp "$SRC" "$DST"
+          grep -n "processReportThread" "$DST"
+          grep -n "if (probe == 15)" "$DST"
+          shasum -a 256 "$CM_BUILD_DIR/NativeUfs.before-probe15.cpp" "$DST"
+
       - name: Add UniXNU probe logging
         script: |
           set -euo pipefail
