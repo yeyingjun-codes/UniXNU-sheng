@@ -340,8 +340,9 @@ workflows:
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
-            echo "=== full component-ShengUfs.log ==="
-            cat "$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/logs/component-ShengUfs.log" || true
+            LOG="$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/logs/component-ShengUfs.log"
+            echo "=== ShengUfs compile errors with context ==="
+            grep -n -B 4 -A 8 "error:" "$LOG" || true
             exit "$rc"
           fi
           rc=${PIPESTATUS[0]}
