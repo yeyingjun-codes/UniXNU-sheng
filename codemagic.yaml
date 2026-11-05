@@ -335,7 +335,15 @@ workflows:
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
           set +e
+          set +e
           scripts/package.sh --os 27 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package27.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "=== full component-ShengUfs.log ==="
+            cat "$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/logs/component-ShengUfs.log" || true
+            exit "$rc"
+          fi
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== package rc=$rc ==="
