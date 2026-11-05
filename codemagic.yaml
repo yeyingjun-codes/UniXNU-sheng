@@ -88,7 +88,6 @@ workflows:
       - artifacts/*.fd
       - artifacts/*.dtb
       - artifacts/*.log
-
   sheng-package27:
     name: UniXNU sheng package 27 (official full build + first-install seed)
     instance_type: mac_mini_m2
@@ -248,7 +247,7 @@ workflows:
           print("driver sources ready")
           PY
 
-      - name: Compile the WiFi firmware loader into the display board link
+      - name: Patch 27 board link to compile the WiFi firmware loader
         script: |
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
@@ -256,71 +255,24 @@ workflows:
           import pathlib
           import sys
 
-          root = pathlib.Path(sys.argv[1])
-          # The display board scripts live in the device repository (device/scripts); keep the
-          # UniXNU checkout as a fallback so this step does not depend on the layout du jour.
-          script_dirs = [root / "device" / "scripts", root / "UniXNU" / "scripts"]
-
-          NL = chr(10)
-
-          # ipados-27 style: the display script keeps a board object list of its own.
-          anchor27 = "board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'"
-          inject27 = NL.join([
-              "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).",
-              "if not (KITS / 'WifiFirmware.c').exists():",
-              "    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())",
-              "compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')",
-              "board_objects.append(board_dir / 'WifiFirmware.o')",
-              "",
-          ])
-
-          # ipados-17 style: plain C sources are listed explicitly and all of them join the
-          # archive. kits/sheng is created by the packaging deps step, so stage the file here.
-          anchor17 = "backlight_c=[ROOT/'kits/sheng/GeniI2c.c']"
-          replacement17 = NL.join([
-              "# Board: stage the WiFi firmware loader the probe calls, then build it with the other",
-              "# board C sources. package/WifiFirmware.c lives in the device repository, not in Git.",
-              "import os as _wifi_os",
-              "_wifi_sources = []",
-              "if _wifi_os.environ.get('UNIXNU_DEVICE'):",
-              "    _wifi_sources.append(Path(_wifi_os.environ['UNIXNU_DEVICE']) / 'package' / 'WifiFirmware.c')",
-              "_wifi_sources += [ROOT / 'package' / 'WifiFirmware.c', ROOT.parent / 'device' / 'package' / 'WifiFirmware.c']",
-              "_wifi_source = next((p for p in _wifi_sources if p.is_file()), None)",
-              "if _wifi_source is None:",
-              "    raise SystemExit('WifiFirmware.c not found; looked in %s' % [str(p) for p in _wifi_sources])",
-              "(ROOT / 'kits/sheng' / 'WifiFirmware.c').write_bytes(_wifi_source.read_bytes())",
-              "print('staged the WiFi firmware loader from', _wifi_source)",
-              "backlight_c=[ROOT/'kits/sheng/GeniI2c.c',ROOT/'kits/sheng/WifiFirmware.c']",
-          ])
-
-          patched = 0
-          seen = []
-          for scripts in script_dirs:
-              if not scripts.is_dir():
-                  continue
-              for path in sorted(scripts.glob("build-gop-legacy-display*.py")):
-                  seen.append(str(path))
-                  text = path.read_text()
-                  if "WifiFirmware.c" in text:
-                      print("already compiles WifiFirmware.c:", path)
-                      patched += 1
-                      continue
-                  if text.count(anchor27) == 1:
-                      path.write_text(text.replace(anchor27, inject27 + anchor27, 1))
-                      print("patched (27 layout):", path)
-                      patched += 1
-                  elif text.count(anchor17) == 1:
-                      path.write_text(text.replace(anchor17, replacement17, 1))
-                      print("patched (17 layout):", path)
-                      patched += 1
-                  else:
-                      sys.exit("no known anchor in %s (27-style %d, 17-style %d)"
-                               % (path, text.count(anchor27), text.count(anchor17)))
-
-          if not patched:
-              sys.exit("no build-gop-legacy-display*.py found; looked in %s" % seen)
+          p = pathlib.Path(sys.argv[1]) / "device" / "scripts" / "build-gop-legacy-display-27.py"
+          text = p.read_text()
+          anchor = "board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'"
+          if "package/WifiFirmware.c" in text:
+              print("already compiles WifiFirmware.c")
+          else:
+              if text.count(anchor) != 1:
+                  sys.exit("anchor not found exactly once: %d" % text.count(anchor))
+              inject = (
+                  "# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).\n"
+                  "if not (KITS / 'WifiFirmware.c').exists():\n"
+                  "    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())\n"
+                  "compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\n"
+                  "board_objects.append(board_dir / 'WifiFirmware.o')\n"
+              )
+              p.write_text(text.replace(anchor, inject + anchor))
+              print("patched", p)
           PY
-          grep -rn "WifiFirmware" "$ROOT"/device/scripts/build-gop-legacy-display*.py
 
       - name: Select header_version 3 and fix the bootimg verify offset
         script: |
@@ -342,100 +294,6 @@ workflows:
           PY
           grep -n -A3 'bootimg"."image' "$ROOT/device/board.toml"
           python3 /tmp/fix_verify.py "$ROOT/UniXNU/scripts/unixnu/bootimg.py"
-
-      - name: Drop the prelink-dependent virtio bindings from the 17 kernel archives
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/pkg27"
-          python3 - "$ROOT" <<'PY'
-          import sys
-          from pathlib import Path
-
-          # build-virtio-mmio-bindings.py (and audit-storage-interface.py before it) read
-          # build/xnu-prelink/native-apfs-load-positive.macho, a prelink candidate that only the
-          # prelink step writes, and that step runs after the archives: the ipados-17.7.11 list
-          # cannot be satisfied in one clean pass. The 26 and 27 profiles ship the same
-          # component:VirtioMmioBlock and component:RamBlock entries, build no virtio bindings,
-          # and link, so the binding archives are not required by the kernel link. Drop just
-          # those two entries and keep the components.
-          drop = [
-              '"build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block", ',
-              '"build-virtio-mmio-bindings.py --component VirtioMmioBlock", ',
-          ]
-          header = '["os_overrides"."ipados-17.7.11-21H461"."kernel"]'
-
-          p = Path(sys.argv[1]) / "device" / "board.toml"
-          lines = p.read_text().splitlines(True)
-          start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
-          if start is None:
-              sys.exit("board.toml has no %s table" % header)
-
-          end = len(lines)
-          for i in range(start + 1, len(lines)):
-              if lines[i].strip().startswith("["):
-                  end = i
-                  break
-
-          block = "".join(lines[start:end])
-          removed = 0
-          for entry in drop:
-              if entry in block:
-                  block = block.replace(entry, "", 1)
-                  removed += 1
-
-          if removed:
-              lines[start:end] = [block]
-              p.write_text("".join(lines))
-              print("dropped %d virtio binding entries from the 17 archives" % removed)
-          else:
-              print("the 17 archives carry no virtio bindings")
-          PY
-          grep -c "build-virtio-mmio-bindings" "$ROOT/device/board.toml" || true
-          grep -c "component:RamBlock" "$ROOT/device/board.toml" || true
-          grep -c "component:VirtioMmioBlock" "$ROOT/device/board.toml" || true
-
-      - name: Fit the payload into the 192 MiB boot partition
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/pkg27"
-          python3 - "$ROOT" <<'PY'
-          import sys
-          from pathlib import Path
-
-          # The ipados-17.7.11 override asks for a 208 MiB payload. Packed as the boot image
-          # ramdisk that is larger than boot_b (0xC000000 = 192 MiB), so the flash would be
-          # refused before anything boots. 176 MiB is what the 27 image already used and it
-          # leaves roughly 14 MiB of headroom for the kernel and the header pages.
-          NL = chr(10)
-          p = Path(sys.argv[1]) / "device" / "board.toml"
-          lines = p.read_text().splitlines(True)
-          header = '["os_overrides"."ipados-17.7.11-21H461"."payload"]'
-
-          start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
-          if start is None:
-              sys.exit("board.toml has no %s table" % header)
-
-          i = start + 1
-          replaced = False
-          while i < len(lines):
-              stripped = lines[i].strip()
-              if stripped.startswith("["):
-                  break
-              if stripped.startswith('"size_mib"'):
-                  lines[i] = '"size_mib" = 176' + NL
-                  replaced = True
-                  break
-              i += 1
-
-          # The override inherits [payload] size_mib when the block has no entry of its own.
-          if not replaced:
-              lines.insert(start + 1, '"size_mib" = 176' + NL)
-
-          p.write_text("".join(lines))
-          print("ipados-17.7.11 payload size is now 176 MiB")
-          print("".join(lines[start:start + 3]))
-          PY
-          grep -n '"size_mib"' "$ROOT/device/board.toml"
 
       - name: Install the read-only process and UI probe
         script: |
@@ -467,7 +325,7 @@ workflows:
           python3 /tmp/apply_ramdisk.py "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
           grep -n "FindFatBootSector" "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
 
-      - name: Build the ipados 17.7.11 package with the packed Data seed
+      - name: Build package 27 with first-install Data seed
         script: |
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
@@ -477,11 +335,7 @@ workflows:
           export GITHUB_TOKEN="${GH_TOKEN:-}"
           cd "$ROOT/device"
           set +e
-          SEED="$CM_BUILD_DIR/ci/data-seed.dbr"
-          if [ ! -f "$SEED" ]; then echo "FATAL: the packed Data seed is missing: $SEED"; exit 1; fi
-          ls -l "$SEED"
-          scripts/package.sh --os 17 --uefi "$ROOT/uefi-sheng" \
-            --data-ramdisk "$SEED" 2>&1 | tee "$CM_BUILD_DIR/package17.log"
+          scripts/package.sh --os 27 --uefi "$ROOT/uefi-sheng" --init-data 2>&1 | tee "$CM_BUILD_DIR/package27.log"
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== package rc=$rc ==="
@@ -493,9 +347,9 @@ workflows:
           ROOT="$CM_BUILD_DIR/pkg27"
           OUT="$CM_BUILD_DIR/out27"
           rm -rf "$OUT"; mkdir -p "$OUT"
-          cp "$CM_BUILD_DIR/package17.log" "$OUT/" || true
+          cp "$CM_BUILD_DIR/package27.log" "$OUT/" || true
 
-          BASE="$ROOT/UniXNU/out/sheng/ipados-17.7.11-21H461"
+          BASE="$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446"
           find "$BASE" -type f \( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \) -exec cp {} "$OUT/" \; 2>/dev/null || true
           find "$ROOT/UniXNU/out/sheng" -type f -name 'sheng.dtb' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
@@ -508,160 +362,3 @@ workflows:
 
     artifacts:
       - out27/*
-  sheng-userdata27-gh:
-    name: UniXNU sheng ipados 27.0.1 userdata (chunks uploaded to a GitHub release)
-    instance_type: mac_mini_m2
-    max_build_duration: 120
-    environment:
-      xcode: latest
-      groups:
-        - github
-      vars:
-        REPO_UNIXNU: "https://github.com/UniXNU/UniXNU.git"
-        REPO_DEVICE: "https://github.com/UniXNU/UniXNU-sheng.git"
-        UNIXNU_REF: "f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63"
-        UNIXNU_UNIQUE_CHIP_ID: "9732b499"
-        IPSW_URL: "https://updates.cdn-apple.com/2026FallFCS/6074e110-d48d-40c2-b0e8-b611520941a3/iPad17,1,iPad17,2,iPad17,3,iPad17,4_27.0.1_24A446_Restore.ipsw"
-        UPLOAD_REPO: "yeyingjun-codes/UniXNU-sheng"
-        RELEASE_TAG: "ud27-24A446"
-        HOMEBREW_NO_AUTO_UPDATE: "1"
-        HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        HOMEBREW_NO_ENV_HINTS: "1"
-    scripts:
-      - name: Reclaim runner disk
-        script: |
-          set -euo pipefail
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* 2>/dev/null || true
-          rm -rf "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
-          df -h / | tail -1
-
-      - name: Host toolchain
-        script: |
-          set -euo pipefail
-          brew install python@3.12 ipsw zstd 2>&1 | tail -4 || true
-          mkdir -p "$HOME/.local/bin"; export PATH="$HOME/.local/bin:$PATH"
-          python3 -c 'import tomllib,sys; print(sys.version)'
-          sw_vers; uname -m
-
-      - name: Checkout device and UniXNU sources
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"
-          rm -rf "$ROOT"; mkdir -p "$ROOT"; cd "$ROOT"
-          git init UniXNU
-          git -C UniXNU remote add origin "$REPO_UNIXNU"
-          git -C UniXNU fetch --depth 1 origin "$UNIXNU_REF"
-          git -C UniXNU checkout --detach FETCH_HEAD
-          git -C UniXNU submodule update --init --recursive --depth 1 --jobs 8
-          git clone --depth 1 --single-branch --branch main "$REPO_DEVICE" device
-          git -C device submodule update --init --recursive --depth 1 --jobs 8 || true
-          echo "UniXNU $(git -C UniXNU rev-parse --short HEAD)  device $(git -C device rev-parse --short HEAD)"
-
-      - name: Package prerequisites (deps)
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"
-          cd "$ROOT/device"
-          export UNIXNU_UNIQUE_CHIP_ID="$UNIXNU_UNIQUE_CHIP_ID"
-          export GITHUB_TOKEN="${GH_TOKEN:-}"
-          ./scripts/package.sh --os 27 --check 2>&1 | tail -25 || true
-
-      - name: Fetch the iPadOS 27.0.1 IPSW
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"; cd "$ROOT"
-          curl -fL --retry 3 --connect-timeout 30 -o restore.ipsw "$IPSW_URL" 2>&1 | tail -2
-          ls -lh restore.ipsw
-
-      - name: Build the userdata image for the 27 OS profile
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$HOME/.local/bin:$PATH"
-          export UNIXNU_DEVICE="$ROOT/device"
-          cd "$ROOT/UniXNU"
-          set +e
-          python3 "$ROOT/UniXNU/unixnu" build -D "$ROOT/device" userdata \
-            --ipsw "$ROOT/restore.ipsw" 2>&1 | tee "$CM_BUILD_DIR/userdata.log"
-          rc=${PIPESTATUS[0]}
-          set -e
-          echo "=== userdata build rc=$rc ==="
-          [ "$rc" -eq 0 ] || exit "$rc"
-
-      - name: Verify the image layout
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"
-          IMG=$(find "$ROOT/UniXNU/out" -name 'userdata-root.img' | head -1)
-          [ -n "$IMG" ] || { echo "no userdata-root.img"; exit 1; }
-          cp "$IMG" "$CM_BUILD_DIR/userdata-root.img"
-          shasum -a 256 "$CM_BUILD_DIR/userdata-root.img" | tee "$CM_BUILD_DIR/userdata.sha256"
-          ls -lh "$CM_BUILD_DIR/userdata-root.img"
-          python3 - "$CM_BUILD_DIR/userdata-root.img" <<'PY'
-          import struct, sys
-          d = open(sys.argv[1], 'rb').read(4096)
-          assert d[:8] == b'SHNGROOT', d[:8]
-          n = struct.unpack_from('<I', d, 12)[0]
-          print('magic SHNGROOT version', struct.unpack_from('<I', d, 8)[0], 'windows', n)
-          print('image_bytes', struct.unpack_from('<Q', d, 16)[0])
-          for i in range(n):
-              o = 24 + 128 * i
-              print(' ', d[o:o+32].rstrip(b'\x00').decode('latin1'),
-                    struct.unpack_from('<QQ', d, o + 32), d[o+56:o+72].hex())
-          PY
-
-      - name: Split into release-sized chunks
-        script: |
-          set -euo pipefail
-          cd "$CM_BUILD_DIR"
-          # GitHub release assets cap at 2 GiB per file; 1900m leaves headroom.
-          split -b 1900m -d -a 2 userdata-root.img ud27-part-
-          ls -lh ud27-part-* | tee parts.txt
-          echo "chunk count: $(ls ud27-part-* | wc -l)"
-
-      - name: Upload the chunks to a GitHub release
-        script: |
-          set -euo pipefail
-          cd "$CM_BUILD_DIR"
-          API="https://api.github.com/repos/$UPLOAD_REPO"
-          AUTH="Authorization: token ${GH_TOKEN:?GH_TOKEN is required for the release upload}"
-          # Create the release once; ignore 422 when it already exists.
-          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' \
-            -d "{\"tag_name\":\"$RELEASE_TAG\",\"name\":\"ipados 27.0.1 userdata ($RELEASE_TAG)\",\"body\":\"userdata-root.img chunks for sheng (24A446). See userdata.sha256.\"}" \
-            "$API/releases" > release.json || true
-          if [ ! -s release.json ]; then
-            curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" > release.json
-          fi
-          UPLOAD_URL=$(python3 -c "import json;print(json.load(open('release.json'))['upload_url'].split('{')[0])")
-          echo "upload_url: $UPLOAD_URL"
-          # A rerun hits 422 already_exists; drop any asset with the same name first.
-          curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" > release.json
-          python3 - <<'PY' > stale.txt
-          import json
-          d = json.load(open('release.json'))
-          for a in d.get('assets', []):
-              print(a['id'], a['name'])
-          PY
-          while read -r aid aname; do
-            case "$aname" in
-              ud27-part-*|userdata.sha256)
-                echo "deleting stale asset $aname ($aid)"
-                curl -sf -X DELETE -H "$AUTH" "$API/releases/assets/$aid" || true
-                ;;
-            esac
-          done < stale.txt
-
-          for f in ud27-part-* userdata.sha256; do
-            echo "uploading $f ($(stat -f%z "$f") bytes)"
-            # -T streams the file; --data-binary would read it whole and run out of memory.
-            curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/octet-stream' \
-              -T "$f" "$UPLOAD_URL?name=$f" -o /dev/null
-            echo "  ok $f"
-          done
-          echo "--- release assets ---"
-          curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" \
-            | python3 -c "import json,sys;d=json.load(sys.stdin);[print(a['name'],a['size'],a['browser_download_url']) for a in d['assets']]"
-
-    artifacts:
-      - userdata.sha256
-      - parts.txt
