@@ -713,7 +713,7 @@ void NativeUfs::adoptAndRead (unsigned level)
         if (!name[c]) { name[c] = 0; break; }
       }
       name[13] = 0;
-      used += static_cast<size_t> (snprintf (text + used, sizeof (text) - used, "%u:%s %llx-%llx%s", index, name,
+      used += snprintf (text + used, sizeof (text) - used, "%u:%s %llx-%llx%s", index, name,
                         le64 (entry + 32), le64 (entry + 40), (++column % 3) ? "  " : "\n");
       listed++;
     }
@@ -1994,7 +1994,7 @@ static void captureMissingMedia (const char *uuid)
     OSString *id = OSDynamicCast (OSString, media->getProperty ("UUID"));
     OSString *bsd = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
     OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
-    used += static_cast<size_t> (snprintf (gRootMediaText + used, sizeof (gRootMediaText) - used,
+    used += snprintf (gRootMediaText + used, sizeof (gRootMediaText) - used,
                       "media %.24s bytes=%llx uuid=%.36s\n",
                       bsd ? bsd->getCStringNoCopy () : "-", size ? size->unsigned64BitValue () : 0ULL,
                       id ? id->getCStringNoCopy () : "-");
@@ -2209,7 +2209,7 @@ static void processReportThread (void *argument, wait_result_t)
                     (unsigned long long)gUiFirst.completions, (unsigned long long)gUiSecond.completions,
                     (unsigned long long)gUiFirst.failures, (unsigned long long)gUiSecond.failures,
                     gUiFirst.submissions, gUiSecond.submissions,
-                    gUiFirst.submitted, gUiFirst.completed, gUiSecond.submitted, gUiSecond.completed);
+                    gUiFirst.submitted, gUiFirst.completed, gUiSecond.submitted, gUiSecond.completed));
   bool dpuPresent = false;
   for (unsigned i = 0; i < 20; ++i) dpuPresent |= gUiSecond.dpu[i] != 0;
   if (dpuPresent) {
@@ -2266,7 +2266,7 @@ static void mediaReportThread (void *, wait_result_t)
     OSString *bsd = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
     OSString *content = OSDynamicCast (OSString, media->getProperty ("Content"));
     OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
-    used += static_cast<size_t> (snprintf (gMediaReport + used, sizeof (gMediaReport) - used, "%s %s size=%llx uuid=%s\n",
+    used += snprintf (gMediaReport + used, sizeof (gMediaReport) - used, "%s %s size=%llx uuid=%s\n",
                       bsd ? bsd->getCStringNoCopy () : "-", content ? content->getCStringNoCopy () : "-",
                       size ? size->unsigned64BitValue () : 0ULL, uuid ? uuid->getCStringNoCopy () : "-");
   }
