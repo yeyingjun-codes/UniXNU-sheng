@@ -494,8 +494,8 @@ workflows:
 
     artifacts:
       - out27/*
-  sheng-userdata27:
-    name: UniXNU sheng ipados 27.0.1 userdata (build userdata-root.img from the IPSW)
+  sheng-userdata27-gh:
+    name: UniXNU sheng ipados 27.0.1 userdata (chunks uploaded to a GitHub release)
     instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
@@ -506,6 +506,8 @@ workflows:
         UNIXNU_REF: "f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63"
         UNIXNU_UNIQUE_CHIP_ID: "9732b499"
         IPSW_URL: "https://updates.cdn-apple.com/2026FallFCS/6074e110-d48d-40c2-b0e8-b611520941a3/iPad17,1,iPad17,2,iPad17,3,iPad17,4_27.0.1_24A446_Restore.ipsw"
+        UPLOAD_REPO: "yeyingjun-codes/UniXNU-sheng"
+        RELEASE_TAG: "ud27-24A446"
         HOMEBREW_NO_AUTO_UPDATE: "1"
         HOMEBREW_NO_INSTALL_CLEANUP: "1"
         HOMEBREW_NO_ENV_HINTS: "1"
@@ -515,15 +517,13 @@ workflows:
           set -euo pipefail
           sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* 2>/dev/null || true
           rm -rf "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
-          echo "free:" && df -h / | tail -1
+          df -h / | tail -1
 
       - name: Host toolchain
         script: |
           set -euo pipefail
-          brew install python@3.12 ipsw zstd xz 2>&1 | tail -6 || true
-          mkdir -p "$HOME/.local/bin"
-          export PATH="$HOME/.local/bin:$PATH"
-          ipsw version || true
+          brew install python@3.12 ipsw zstd 2>&1 | tail -4 || true
+          mkdir -p "$HOME/.local/bin"; export PATH="$HOME/.local/bin:$PATH"
           python3 -c 'import tomllib,sys; print(sys.version)'
           sw_vers; uname -m
 
@@ -539,10 +539,7 @@ workflows:
           git -C UniXNU submodule update --init --recursive --depth 1 --jobs 8
           git clone --depth 1 --single-branch --branch main "$REPO_DEVICE" device
           git -C device submodule update --init --recursive --depth 1 --jobs 8 || true
-          chmod +x UniXNU/unixnu
-          echo "UniXNU  $(git -C UniXNU rev-parse --short HEAD)"
-          echo "device  $(git -C device rev-parse --short HEAD)"
-          test -x UniXNU/unixnu || exit 1
+          echo "UniXNU $(git -C UniXNU rev-parse --short HEAD)  device $(git -C device rev-parse --short HEAD)"
 
       - name: Package prerequisites (deps)
         script: |
@@ -551,22 +548,13 @@ workflows:
           cd "$ROOT/device"
           export UNIXNU_UNIQUE_CHIP_ID="$UNIXNU_UNIQUE_CHIP_ID"
           export GITHUB_TOKEN="${GH_TOKEN:-}"
-          echo "github token: ${GH_TOKEN:+present}"
-          # package.sh runs deps/preflight; verbose so a failure is readable.
-          ./scripts/package.sh --os 27 --check 2>&1 | tail -40 || true
+          ./scripts/package.sh --os 27 --check 2>&1 | tail -25 || true
 
       - name: Fetch the iPadOS 27.0.1 IPSW
         script: |
           set -euo pipefail
-          ROOT="$CM_BUILD_DIR/ud27"
-          cd "$ROOT"
-          # force freshness: a unique marker prevents this step from being cached
-          echo "workflow revision 2 - $(git -C "$ROOT/device" rev-parse --short HEAD)"
-          ls -lh restore.ipsw 2>/dev/null || true
-          if [ ! -s restore.ipsw ]; then
-            curl -fL --retry 3 --connect-timeout 30 -o restore.ipsw "$IPSW_URL" 2>&1 | tail -3
-          fi
-          shasum -a 256 restore.ipsw
+          ROOT="$CM_BUILD_DIR/ud27"; cd "$ROOT"
+          curl -fL --retry 3 --connect-timeout 30 -o restore.ipsw "$IPSW_URL" 2>&1 | tail -2
           ls -lh restore.ipsw
 
       - name: Build the userdata image for the 27 OS profile
@@ -574,45 +562,72 @@ workflows:
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/ud27"
           export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$HOME/.local/bin:$PATH"
-          # Point UNIXNU_DEVICE at the device checkout so board.toml/userdata windows come from it.
           export UNIXNU_DEVICE="$ROOT/device"
           cd "$ROOT/UniXNU"
-          # cli.py: build takes the steps list as a positional argument; no-cache marker v2 (all/kernel/.../userdata).
           set +e
-          # -D belongs to the subcommand (cli.py registers it via parents=[common()]), never the top level.
           python3 "$ROOT/UniXNU/unixnu" build -D "$ROOT/device" userdata \
             --ipsw "$ROOT/restore.ipsw" 2>&1 | tee "$CM_BUILD_DIR/userdata.log"
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== userdata build rc=$rc ==="
-          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          [ "$rc" -eq 0 ] || exit "$rc"
 
-      - name: Verify and collect userdata-root.img
+      - name: Verify the image layout
         script: |
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/ud27"
           IMG=$(find "$ROOT/UniXNU/out" -name 'userdata-root.img' | head -1)
-          [ -n "$IMG" ] || { echo "no userdata-root.img produced"; exit 1; }
+          [ -n "$IMG" ] || { echo "no userdata-root.img"; exit 1; }
           cp "$IMG" "$CM_BUILD_DIR/userdata-root.img"
-          JSON=$(find "$ROOT/UniXNU/out" -name 'userdata-root.json' | head -1 || true)
-          [ -n "$JSON" ] && cp "$JSON" "$CM_BUILD_DIR/userdata-root.json" || true
-          cp "$CM_BUILD_DIR/userdata.log" "$CM_BUILD_DIR/" 2>/dev/null || true
+          shasum -a 256 "$CM_BUILD_DIR/userdata-root.img" | tee "$CM_BUILD_DIR/userdata.sha256"
           ls -lh "$CM_BUILD_DIR/userdata-root.img"
           python3 - "$CM_BUILD_DIR/userdata-root.img" <<'PY'
           import struct, sys
-          d = open(__import__('sys').argv[1], 'rb').read(4096)
-          print('magic', d[:8])
-          print('version', struct.unpack_from('<I', d, 8)[0], 'windows', struct.unpack_from('<I', d, 12)[0])
+          d = open(sys.argv[1], 'rb').read(4096)
+          assert d[:8] == b'SHNGROOT', d[:8]
+          n = struct.unpack_from('<I', d, 12)[0]
+          print('magic SHNGROOT version', struct.unpack_from('<I', d, 8)[0], 'windows', n)
           print('image_bytes', struct.unpack_from('<Q', d, 16)[0])
-          for i in range(struct.unpack_from('<I', d, 12)[0]):
+          for i in range(n):
               o = 24 + 128 * i
-              name = d[o:o+32].rstrip(b'\x00').decode('latin1')
-              off, size = struct.unpack_from('<QQ', d, o+32)
-              bs, fl = struct.unpack_from('<2I', d, o+48)
-              print('  ', name, 'offset', off, 'size', size, 'bs', bs, 'flags', fl)
+              print(' ', d[o:o+32].rstrip(b'\x00').decode('latin1'),
+                    struct.unpack_from('<QQ', d, o + 32), d[o+56:o+72].hex())
           PY
 
+      - name: Split into release-sized chunks
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+          # GitHub release assets cap at 2 GiB per file; 1900m leaves headroom.
+          split -b 1900m -d -a 2 userdata-root.img ud27-part-
+          ls -lh ud27-part-* | tee parts.txt
+          echo "chunk count: $(ls ud27-part-* | wc -l)"
+
+      - name: Upload the chunks to a GitHub release
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+          API="https://api.github.com/repos/$UPLOAD_REPO"
+          AUTH="Authorization: token ${GH_TOKEN:?GH_TOKEN is required for the release upload}"
+          # Create the release once; ignore 422 when it already exists.
+          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"tag_name\":\"$RELEASE_TAG\",\"name\":\"ipados 27.0.1 userdata ($RELEASE_TAG)\",\"body\":\"userdata-root.img chunks for sheng (24A446). See userdata.sha256.\"}" \
+            "$API/releases" > release.json || true
+          if [ ! -s release.json ]; then
+            curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" > release.json
+          fi
+          UPLOAD_URL=$(python3 -c "import json;print(json.load(open('release.json'))['upload_url'].split('{')[0])")
+          echo "upload_url: $UPLOAD_URL"
+          for f in ud27-part-* userdata.sha256; do
+            echo "uploading $f ($(stat -f%z "$f") bytes)"
+            curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/octet-stream' \
+              --data-binary "@$f" "$UPLOAD_URL?name=$f" -o /dev/null
+            echo "  ok $f"
+          done
+          echo "--- release assets ---"
+          curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" \
+            | python3 -c "import json,sys;d=json.load(sys.stdin);[print(a['name'],a['size'],a['browser_download_url']) for a in d['assets']]"
+
     artifacts:
-      - userdata-root.img
-      - userdata-root.json
-      - userdata.log
+      - userdata.sha256
+      - parts.txt
