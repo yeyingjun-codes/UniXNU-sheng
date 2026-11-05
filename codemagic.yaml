@@ -500,6 +500,8 @@ workflows:
     max_build_duration: 120
     environment:
       xcode: latest
+      groups:
+        - github
       vars:
         REPO_UNIXNU: "https://github.com/UniXNU/UniXNU.git"
         REPO_DEVICE: "https://github.com/UniXNU/UniXNU-sheng.git"
