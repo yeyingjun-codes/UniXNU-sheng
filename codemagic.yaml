@@ -494,7 +494,6 @@ workflows:
 
     artifacts:
       - out27/*
-
   sheng-userdata27:
     name: UniXNU sheng ipados 27.0.1 userdata (build userdata-root.img from the IPSW)
     instance_type: mac_mini_m2
@@ -576,9 +575,10 @@ workflows:
           # Point UNIXNU_DEVICE at the device checkout so board.toml/userdata windows come from it.
           export UNIXNU_DEVICE="$ROOT/device"
           cd "$ROOT/UniXNU"
+          # cli.py: build takes the steps list as a positional argument (all/kernel/.../userdata).
           set +e
-          ./unixnu -D "$ROOT/device" build userdata --ipsw "$ROOT/restore.ipsw" \
-            2>&1 | tee "$CM_BUILD_DIR/userdata.log"
+          python3 "$ROOT/UniXNU/unixnu" -D "$ROOT/device" build userdata \
+            --ipsw "$ROOT/restore.ipsw" 2>&1 | tee "$CM_BUILD_DIR/userdata.log"
           rc=${PIPESTATUS[0]}
           set -e
           echo "=== userdata build rc=$rc ==="
