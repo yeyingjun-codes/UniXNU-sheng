@@ -713,7 +713,7 @@ void NativeUfs::adoptAndRead (unsigned level)
         if (!name[c]) { name[c] = 0; break; }
       }
       name[13] = 0;
-      used += snprintf (text + used, sizeof (text) - used, "%u:%s %llx-%llx%s", index, name,
+      used += static_cast<size_t> (snprintf (text + used, sizeof (text) - used, "%u:%s %llx-%llx%s", index, name,
                         le64 (entry + 32), le64 (entry + 40), (++column % 3) ? "  " : "\n");
       listed++;
     }
@@ -1994,7 +1994,7 @@ static void captureMissingMedia (const char *uuid)
     OSString *id = OSDynamicCast (OSString, media->getProperty ("UUID"));
     OSString *bsd = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
     OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
-    used += snprintf (gRootMediaText + used, sizeof (gRootMediaText) - used,
+    used += static_cast<size_t> (snprintf (gRootMediaText + used, sizeof (gRootMediaText) - used,
                       "media %.24s bytes=%llx uuid=%.36s\n",
                       bsd ? bsd->getCStringNoCopy () : "-", size ? size->unsigned64BitValue () : 0ULL,
                       id ? id->getCStringNoCopy () : "-");
@@ -2124,24 +2124,31 @@ static void sampleUfsUi (UfsUiSample *sample)
     boot_process_snapshot ();
     if (&boot_process_rows) memcpy (sample->rows, boot_process_rows, sizeof (sample->rows));
   }
-  if (&boot_process_passes) sample->passes = boot_process_passes;
-  if (&boot_process_seen) sample->seen = boot_process_seen;
-  if (&boot_process_attempts) sample->attempts = boot_process_attempts;
-  if (&boot_process_busy) sample->busy = boot_process_busy;
-  if (&native_legacy_frame_count) sample->frames = native_legacy_frame_count;
-  if (&native_legacy_swap_accepted_count) sample->accepted = native_legacy_swap_accepted_count;
-  if (&native_legacy_swap_rejected_count) sample->rejected = native_legacy_swap_rejected_count;
-  if (&native_adreno_submit_ibs) sample->submissions = native_adreno_submit_ibs[0];
-  if (&native_adreno_fence_wait) {
-    sample->submitted = native_adreno_fence_wait[4];
-    sample->completed = native_adreno_fence_wait[5];
-  }
-  if (&native_gop_gpu_offers) sample->offers = native_gop_gpu_offers;
-  if (&native_gop_gpu_completions) sample->completions = native_gop_gpu_completions;
-  if (&native_gop_gpu_failures) sample->failures = native_gop_gpu_failures;
-  if (&native_dpu_stats) memcpy (sample->dpu, native_dpu_stats, sizeof (sample->dpu));
+  sample->passes = boot_process_passes;
+  sample->seen = boot_process_seen;
+  sample->attempts = boot_process_attempts;
+  sample->busy = boot_process_busy;
+  sample->frames = native_legacy_frame_count;
+  sample->accepted = native_legacy_swap_accepted_count;
+  sample->rejected = native_legacy_swap_rejected_count;
+  sample->submissions = native_adreno_submit_ibs[0];
+  sample->submitted = native_adreno_fence_wait[4];
+  sample->completed = native_adreno_fence_wait[5];
+  sample->offers = native_gop_gpu_offers;
+  sample->completions = native_gop_gpu_completions;
+  sample->failures = native_gop_gpu_failures;
+  for (unsigned i = 0; i < 20; ++i) sample->dpu[i] = native_dpu_stats[i];
   if (boot_progress_spawn_rows) boot_progress_spawn_rows (sample->spawn, sizeof (sample->spawn));
   if (boot_ui_trace_hot_rows) boot_ui_trace_hot_rows (sample->hot, 4);
+}
+
+static bool ufsContains (const char *haystack, const char *needle)
+{
+  const size_t n = strlen (needle);
+  for (const char *p = haystack; *p; ++p) {
+    if (strncmp (p, needle, n) == 0) return true;
+  }
+  return false;
 }
 
 static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used)
@@ -2155,8 +2162,8 @@ static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used
       char line[240];
       memcpy (line, cursor, length);
       line[length] = 0;
-      if (strstr (line, name)) {
-        used += snprintf (gUiReport + used, sizeof (gUiReport) - used, "census %s\n", line);
+      if (ufsContains (line, name)) {
+        used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "census %s\n", line));
         found = true;
       }
     }
@@ -2164,8 +2171,8 @@ static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used
     cursor = end + 1;
   }
   if (!found && used < sizeof (gUiReport) - 160) {
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used,
-                      "census %s: no row (not started, or worker unavailable)\n", name);
+    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
+                      "census %s: no row (not started, or worker unavailable)\n", name));
   }
 }
 
@@ -2180,19 +2187,19 @@ static void processReportThread (void *argument, wait_result_t)
   static const char *const names[6] = {
     "launchd", "WindowServer", "SpringBoard", "backboardd", "iconservicesagent", "wifid"
   };
-  size_t used = snprintf (gUiReport, sizeof (gUiReport),
+  size_t used = static_cast<size_t> (snprintf (gUiReport, sizeof (gUiReport),
                           "NATIVE_UFS process/UI report after %u s (+5 s second sample)\n"
                           "worker passes=%u->%u seen=%u->%u attempts=%u->%u busy=%u->%u\n",
                           delay, gUiFirst.passes, gUiSecond.passes, gUiFirst.seen, gUiSecond.seen,
-                          gUiFirst.attempts, gUiSecond.attempts, gUiFirst.busy, gUiSecond.busy);
+                          gUiFirst.attempts, gUiSecond.attempts, gUiFirst.busy, gUiSecond.busy));
   for (unsigned i = 0; i < 6 && used < sizeof (gUiReport) - 300; ++i) {
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used, "A %s\n", gUiFirst.rows[i]);
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used, "B %s\n", gUiSecond.rows[i]);
+    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "A %s\n", gUiFirst.rows[i]));
+    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "B %s\n", gUiSecond.rows[i]));
   }
   for (unsigned i = 0; i < 6 && used < sizeof (gUiReport) - 260; ++i) {
     appendUfsUiCensus (gUiSecond.spawn, names[i], used);
   }
-  used += snprintf (gUiReport + used, sizeof (gUiReport) - used,
+  used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
                     "present frames=%u->%u accepted=%u->%u rejected=%u->%u\n"
                     "gpu offers=%llu->%llu completions=%llu->%llu failures=%llu->%llu\n"
                     "gpu submissions=%u->%u fences=%u/%u->%u/%u\n",
@@ -2206,14 +2213,14 @@ static void processReportThread (void *argument, wait_result_t)
   bool dpuPresent = false;
   for (unsigned i = 0; i < 20; ++i) dpuPresent |= gUiSecond.dpu[i] != 0;
   if (dpuPresent) {
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used,
-                      "dpu i1=%u->%u i2=%u->%u\n", gUiFirst.dpu[5], gUiSecond.dpu[6],
-                      gUiFirst.dpu[13], gUiSecond.dpu[14]);
+  used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
+                    "dpu i1=%u->%u i2=%u->%u\n", gUiFirst.dpu[5], gUiSecond.dpu[6],
+                    gUiFirst.dpu[13], gUiSecond.dpu[14]));
   } else {
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used, "dpu unavailable (no published counters)\n");
+    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "dpu unavailable (no published counters)\n"));
   }
   for (unsigned i = 0; i < 4 && gUiSecond.hot[i][0] && used < sizeof (gUiReport) - 140; ++i) {
-    used += snprintf (gUiReport + used, sizeof (gUiReport) - used, "%s\n", gUiSecond.hot[i]);
+    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "%s\n", gUiSecond.hot[i]));
   }
   panic ("%s", gUiReport);
 }
@@ -2259,7 +2266,7 @@ static void mediaReportThread (void *, wait_result_t)
     OSString *bsd = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
     OSString *content = OSDynamicCast (OSString, media->getProperty ("Content"));
     OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
-    used += snprintf (gMediaReport + used, sizeof (gMediaReport) - used, "%s %s size=%llx uuid=%s\n",
+    used += static_cast<size_t> (snprintf (gMediaReport + used, sizeof (gMediaReport) - used, "%s %s size=%llx uuid=%s\n",
                       bsd ? bsd->getCStringNoCopy () : "-", content ? content->getCStringNoCopy () : "-",
                       size ? size->unsigned64BitValue () : 0ULL, uuid ? uuid->getCStringNoCopy () : "-");
   }
