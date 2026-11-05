@@ -2114,8 +2114,8 @@ struct UfsUiSample {
   char hot[4][120];
 };
 
-static UfsUiSample gUiFirst, gUiSecond;
-static char gUiReport[16384];
+static char *gUiReport;
+constexpr size_t kUiReportBytes = 16384;
 
 static void sampleUfsUi (UfsUiSample *sample)
 {
@@ -2155,7 +2155,7 @@ static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used
 {
   bool found = false;
   const char *cursor = spawn;
-  while (cursor && *cursor && used < sizeof (gUiReport) - 160) {
+  while (cursor && *cursor && used < kUiReportBytes - 160) {
     const char *end = strchr (cursor, '\n');
     size_t length = end ? static_cast<size_t> (end - cursor) : strlen (cursor);
     if (length && length < 240) {
@@ -2163,15 +2163,15 @@ static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used
       memcpy (line, cursor, length);
       line[length] = 0;
       if (ufsContains (line, name)) {
-        used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "census %s\n", line));
+        used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "census %s\n", line));
         found = true;
       }
     }
     if (!end) break;
     cursor = end + 1;
   }
-  if (!found && used < sizeof (gUiReport) - 160) {
-    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
+  if (!found && used < kUiReportBytes - 160) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                       "census %s: no row (not started, or worker unavailable)\n", name));
   }
 }
@@ -2179,48 +2179,54 @@ static void appendUfsUiCensus (const char *spawn, const char *name, size_t &used
 static void processReportThread (void *argument, wait_result_t)
 {
   const unsigned delay = static_cast<unsigned> (reinterpret_cast<uintptr_t> (argument));
+  UfsUiSample *first = static_cast<UfsUiSample *> (IOMalloc (sizeof (UfsUiSample)));
+  UfsUiSample *second = static_cast<UfsUiSample *> (IOMalloc (sizeof (UfsUiSample)));
+  gUiReport = static_cast<char *> (IOMalloc (kUiReportBytes));
+  if (!first || !second || !gUiReport) {
+    panic ("NATIVE_UFS process/UI report: allocation failed");
+  }
   IOSleep (delay * 1000);
-  sampleUfsUi (&gUiFirst);
+  sampleUfsUi (first);
   IOSleep (5000);
-  sampleUfsUi (&gUiSecond);
+  sampleUfsUi (second);
 
   static const char *const names[6] = {
     "launchd", "WindowServer", "SpringBoard", "backboardd", "iconservicesagent", "wifid"
   };
-  size_t used = static_cast<size_t> (snprintf (gUiReport, sizeof (gUiReport),
+  size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
                           "NATIVE_UFS process/UI report after %u s (+5 s second sample)\n"
                           "worker passes=%u->%u seen=%u->%u attempts=%u->%u busy=%u->%u\n",
-                          delay, gUiFirst.passes, gUiSecond.passes, gUiFirst.seen, gUiSecond.seen,
-                          gUiFirst.attempts, gUiSecond.attempts, gUiFirst.busy, gUiSecond.busy));
-  for (unsigned i = 0; i < 6 && used < sizeof (gUiReport) - 300; ++i) {
-    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "A %s\n", gUiFirst.rows[i]));
-    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "B %s\n", gUiSecond.rows[i]));
+                          delay, first->passes, second->passes, first->seen, second->seen,
+                          first->attempts, second->attempts, first->busy, second->busy));
+  for (unsigned i = 0; i < 6 && used < kUiReportBytes - 300; ++i) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "A %s\n", first->rows[i]));
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "B %s\n", second->rows[i]));
   }
-  for (unsigned i = 0; i < 6 && used < sizeof (gUiReport) - 260; ++i) {
-    appendUfsUiCensus (gUiSecond.spawn, names[i], used);
+  for (unsigned i = 0; i < 6 && used < kUiReportBytes - 260; ++i) {
+    appendUfsUiCensus (second->spawn, names[i], used);
   }
-  used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                     "present frames=%u->%u accepted=%u->%u rejected=%u->%u\n"
                     "gpu offers=%llu->%llu completions=%llu->%llu failures=%llu->%llu\n"
                     "gpu submissions=%u->%u fences=%u/%u->%u/%u\n",
-                    gUiFirst.frames, gUiSecond.frames, gUiFirst.accepted, gUiSecond.accepted,
-                    gUiFirst.rejected, gUiSecond.rejected,
-                    (unsigned long long)gUiFirst.offers, (unsigned long long)gUiSecond.offers,
-                    (unsigned long long)gUiFirst.completions, (unsigned long long)gUiSecond.completions,
-                    (unsigned long long)gUiFirst.failures, (unsigned long long)gUiSecond.failures,
-                    gUiFirst.submissions, gUiSecond.submissions,
-                    gUiFirst.submitted, gUiFirst.completed, gUiSecond.submitted, gUiSecond.completed));
+                    first->frames, second->frames, first->accepted, second->accepted,
+                    first->rejected, second->rejected,
+                    (unsigned long long)first->offers, (unsigned long long)second->offers,
+                    (unsigned long long)first->completions, (unsigned long long)second->completions,
+                    (unsigned long long)first->failures, (unsigned long long)second->failures,
+                    first->submissions, second->submissions,
+                    first->submitted, first->completed, second->submitted, second->completed));
   bool dpuPresent = false;
-  for (unsigned i = 0; i < 20; ++i) dpuPresent |= gUiSecond.dpu[i] != 0;
+  for (unsigned i = 0; i < 20; ++i) dpuPresent |= second->dpu[i] != 0;
   if (dpuPresent) {
-  used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used,
-                    "dpu i1=%u->%u i2=%u->%u\n", gUiFirst.dpu[5], gUiSecond.dpu[6],
-                    gUiFirst.dpu[13], gUiSecond.dpu[14]));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "dpu i1=%u->%u i2=%u->%u\n", first->dpu[5], second->dpu[6],
+                    first->dpu[13], second->dpu[14]));
   } else {
-    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "dpu unavailable (no published counters)\n"));
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "dpu unavailable (no published counters)\n"));
   }
-  for (unsigned i = 0; i < 4 && gUiSecond.hot[i][0] && used < sizeof (gUiReport) - 140; ++i) {
-    used += static_cast<size_t> (snprintf (gUiReport + used, sizeof (gUiReport) - used, "%s\n", gUiSecond.hot[i]));
+  for (unsigned i = 0; i < 4 && second->hot[i][0] && used < kUiReportBytes - 140; ++i) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->hot[i]));
   }
   panic ("%s", gUiReport);
 }
