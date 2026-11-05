@@ -494,46 +494,125 @@ workflows:
 
     artifacts:
       - out27/*
-  sheng-cli-probe:
-    name: probe the unixnu CLI argument form
+  sheng-userdata27:
+    name: UniXNU sheng ipados 27.0.1 userdata (build userdata-root.img from the IPSW)
     instance_type: mac_mini_m2
-    max_build_duration: 10
+    max_build_duration: 120
     environment:
       xcode: latest
       vars:
         REPO_UNIXNU: "https://github.com/UniXNU/UniXNU.git"
+        REPO_DEVICE: "https://github.com/UniXNU/UniXNU-sheng.git"
         UNIXNU_REF: "f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63"
+        UNIXNU_UNIQUE_CHIP_ID: "9732b499"
+        IPSW_URL: "https://updates.cdn-apple.com/2026FallFCS/6074e110-d48d-40c2-b0e8-b611520941a3/iPad17,1,iPad17,2,iPad17,3,iPad17,4_27.0.1_24A446_Restore.ipsw"
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        HOMEBREW_NO_ENV_HINTS: "1"
     scripts:
-      - name: Fetch UniXNU
+      - name: Reclaim runner disk
         script: |
           set -euo pipefail
-          cd "$CM_BUILD_DIR"
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* 2>/dev/null || true
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
+          echo "free:" && df -h / | tail -1
+
+      - name: Host toolchain
+        script: |
+          set -euo pipefail
+          brew install python@3.12 ipsw zstd xz 2>&1 | tail -6 || true
+          mkdir -p "$HOME/.local/bin"
+          export PATH="$HOME/.local/bin:$PATH"
+          ipsw version || true
+          python3 -c 'import tomllib,sys; print(sys.version)'
+          sw_vers; uname -m
+
+      - name: Checkout device and UniXNU sources
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/ud27"
+          rm -rf "$ROOT"; mkdir -p "$ROOT"; cd "$ROOT"
           git init UniXNU
           git -C UniXNU remote add origin "$REPO_UNIXNU"
           git -C UniXNU fetch --depth 1 origin "$UNIXNU_REF"
           git -C UniXNU checkout --detach FETCH_HEAD
-          git -C UniXNU submodule update --init --depth 1 --jobs 8
-      - name: Try the CLI forms against a bare parser
+          git -C UniXNU submodule update --init --recursive --depth 1 --jobs 8
+          git clone --depth 1 --single-branch --branch main "$REPO_DEVICE" device
+          git -C device submodule update --init --recursive --depth 1 --jobs 8 || true
+          chmod +x UniXNU/unixnu
+          echo "UniXNU  $(git -C UniXNU rev-parse --short HEAD)"
+          echo "device  $(git -C device rev-parse --short HEAD)"
+          test -x UniXNU/unixnu || exit 1
+
+      - name: Package prerequisites (deps)
         script: |
           set -euo pipefail
-          cd "$CM_BUILD_DIR/UniXNU"
-          python3 unixnu --help | head -8
-          echo "--- form A: top-level -D before the subcommand ---"
-          python3 unixnu -h 2>&1 | grep -- "-D" | head -2
-          echo "--- show what the parser sees for: -D /tmp build userdata ---"
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0, "scripts")
-          from unixnu.cli import parser
-          for argv in [
-              ["-D", "/tmp/device", "build", "userdata"],
-              ["-D", "/tmp/device", "build", "--ipsw", "X"],
-              ["build", "userdata"],
-              ["build", "--ipsw", "X"],
-          ]:
-              try:
-                  a = parser().parse_args(argv)
-                  print(argv, "->", {k: getattr(a, k, None) for k in ("command","device","steps","ipsw")})
-              except SystemExit as e:
-                  print(argv, "-> SystemExit", e.code)
+          ROOT="$CM_BUILD_DIR/ud27"
+          cd "$ROOT/device"
+          export UNIXNU_UNIQUE_CHIP_ID="$UNIXNU_UNIQUE_CHIP_ID"
+          export GITHUB_TOKEN="${GH_TOKEN:-}"
+          echo "github token: ${GH_TOKEN:+present}"
+          # package.sh runs deps/preflight; verbose so a failure is readable.
+          ./scripts/package.sh --os 27 --check 2>&1 | tail -40 || true
+
+      - name: Fetch the iPadOS 27.0.1 IPSW
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/ud27"
+          cd "$ROOT"
+          # force freshness: a unique marker prevents this step from being cached
+          echo "workflow revision 2 - $(git -C "$ROOT/device" rev-parse --short HEAD)"
+          ls -lh restore.ipsw 2>/dev/null || true
+          if [ ! -s restore.ipsw ]; then
+            curl -fL --retry 3 --connect-timeout 30 -o restore.ipsw "$IPSW_URL" 2>&1 | tail -3
+          fi
+          shasum -a 256 restore.ipsw
+          ls -lh restore.ipsw
+
+      - name: Build the userdata image for the 27 OS profile
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/ud27"
+          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$HOME/.local/bin:$PATH"
+          # Point UNIXNU_DEVICE at the device checkout so board.toml/userdata windows come from it.
+          export UNIXNU_DEVICE="$ROOT/device"
+          cd "$ROOT/UniXNU"
+          # cli.py: build takes the steps list as a positional argument; no-cache marker v2 (all/kernel/.../userdata).
+          set +e
+          # -D belongs to the subcommand (cli.py registers it via parents=[common()]), never the top level.
+          python3 "$ROOT/UniXNU/unixnu" build -D "$ROOT/device" userdata \
+            --ipsw "$ROOT/restore.ipsw" 2>&1 | tee "$CM_BUILD_DIR/userdata.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "=== userdata build rc=$rc ==="
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Verify and collect userdata-root.img
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/ud27"
+          IMG=$(find "$ROOT/UniXNU/out" -name 'userdata-root.img' | head -1)
+          [ -n "$IMG" ] || { echo "no userdata-root.img produced"; exit 1; }
+          cp "$IMG" "$CM_BUILD_DIR/userdata-root.img"
+          JSON=$(find "$ROOT/UniXNU/out" -name 'userdata-root.json' | head -1 || true)
+          [ -n "$JSON" ] && cp "$JSON" "$CM_BUILD_DIR/userdata-root.json" || true
+          cp "$CM_BUILD_DIR/userdata.log" "$CM_BUILD_DIR/" 2>/dev/null || true
+          ls -lh "$CM_BUILD_DIR/userdata-root.img"
+          python3 - "$CM_BUILD_DIR/userdata-root.img" <<'PY'
+          import struct, sys
+          d = open(__import__('sys').argv[1], 'rb').read(4096)
+          print('magic', d[:8])
+          print('version', struct.unpack_from('<I', d, 8)[0], 'windows', struct.unpack_from('<I', d, 12)[0])
+          print('image_bytes', struct.unpack_from('<Q', d, 16)[0])
+          for i in range(struct.unpack_from('<I', d, 12)[0]):
+              o = 24 + 128 * i
+              name = d[o:o+32].rstrip(b'\x00').decode('latin1')
+              off, size = struct.unpack_from('<QQ', d, o+32)
+              bs, fl = struct.unpack_from('<2I', d, o+48)
+              print('  ', name, 'offset', off, 'size', size, 'bs', bs, 'flags', fl)
           PY
+
+    artifacts:
+      - userdata-root.img
+      - userdata-root.json
+      - userdata.log
