@@ -620,10 +620,28 @@ workflows:
           fi
           UPLOAD_URL=$(python3 -c "import json;print(json.load(open('release.json'))['upload_url'].split('{')[0])")
           echo "upload_url: $UPLOAD_URL"
+          # A rerun hits 422 already_exists; drop any asset with the same name first.
+          curl -sf -H "$AUTH" "$API/releases/tags/$RELEASE_TAG" > release.json
+          python3 - <<'PY' > stale.txt
+          import json
+          d = json.load(open('release.json'))
+          for a in d.get('assets', []):
+              print(a['id'], a['name'])
+          PY
+          while read -r aid aname; do
+            case "$aname" in
+              ud27-part-*|userdata.sha256)
+                echo "deleting stale asset $aname ($aid)"
+                curl -sf -X DELETE -H "$AUTH" "$API/releases/assets/$aid" || true
+                ;;
+            esac
+          done < stale.txt
+
           for f in ud27-part-* userdata.sha256; do
             echo "uploading $f ($(stat -f%z "$f") bytes)"
+            # -T streams the file; --data-binary would read it whole and run out of memory.
             curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/octet-stream' \
-              --data-binary "@$f" "$UPLOAD_URL?name=$f" -o /dev/null
+              -T "$f" "$UPLOAD_URL?name=$f" -o /dev/null
             echo "  ok $f"
           done
           echo "--- release assets ---"
