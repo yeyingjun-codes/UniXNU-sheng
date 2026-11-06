@@ -2093,6 +2093,15 @@ extern void boot_process_snapshot (void) __attribute__((weak_import));
 extern size_t boot_progress_spawn_rows (char *, size_t) __attribute__((weak_import));
 extern unsigned boot_ui_trace_hot_rows (char [][120], unsigned) __attribute__((weak_import));
 extern unsigned boot_ui_trace_role_rows (unsigned, char [][120], unsigned, unsigned) __attribute__((weak_import));
+extern unsigned native_legacy_clients_dump (char *, unsigned) __attribute__((weak_import));
+extern unsigned native_legacy_state_words (char *, unsigned) __attribute__((weak_import));
+extern unsigned native_legacy_properties_now (char *, unsigned) __attribute__((weak_import));
+extern volatile uint32_t native_legacy_stage, native_legacy_start_result, native_legacy_probe_match;
+extern volatile uint32_t native_legacy_registration_calls, native_legacy_surface_found;
+extern volatile uint32_t native_legacy_pm_stage, native_legacy_client_calls;
+extern volatile int native_legacy_surface_status, native_legacy_pm_status, native_legacy_client_status;
+extern volatile int native_legacy_client_pid;
+extern volatile uint64_t native_legacy_gop_map;
 extern char boot_process_rows[10][120] __attribute__((weak_import));
 extern volatile unsigned boot_process_passes, boot_process_seen __attribute__((weak_import));
 extern volatile unsigned boot_process_attempts, boot_process_busy __attribute__((weak_import));
@@ -2117,6 +2126,12 @@ struct UfsUiSample {
   char hot[4][120];
   unsigned roleCount[3];
   char role[3][12][120];
+  uint32_t stage, startResult, probeMatch, registration, surfaceFound, pmStage, clientCalls;
+  int surfaceStatus, pmStatus, clientStatus, clientPid;
+  uint64_t gopMap;
+  char clients[2200];
+  char state[256];
+  char props[512];
 };
 
 static char *gUiReport;
@@ -2125,6 +2140,21 @@ constexpr size_t kUiReportBytes = 16384;
 static void sampleUfsUi (UfsUiSample *sample)
 {
   memset (sample, 0, sizeof (*sample));
+  sample->stage = native_legacy_stage;
+  sample->startResult = native_legacy_start_result;
+  sample->probeMatch = native_legacy_probe_match;
+  sample->registration = native_legacy_registration_calls;
+  sample->surfaceStatus = native_legacy_surface_status;
+  sample->surfaceFound = native_legacy_surface_found;
+  sample->pmStage = native_legacy_pm_stage;
+  sample->pmStatus = native_legacy_pm_status;
+  sample->clientCalls = native_legacy_client_calls;
+  sample->clientStatus = native_legacy_client_status;
+  sample->clientPid = native_legacy_client_pid;
+  sample->gopMap = native_legacy_gop_map;
+  if (native_legacy_clients_dump) native_legacy_clients_dump (sample->clients, sizeof (sample->clients));
+  if (native_legacy_state_words) native_legacy_state_words (sample->state, sizeof (sample->state));
+  if (native_legacy_properties_now) native_legacy_properties_now (sample->props, sizeof (sample->props));
   if (boot_process_capture && boot_process_passes == 0) boot_process_capture ();
   if (boot_process_snapshot) {
     boot_process_snapshot ();
@@ -2246,6 +2276,40 @@ static void processReportThread (void *argument, wait_result_t)
   for (unsigned i = 0; i < 4 && second->hot[i][0] && used < kUiReportBytes - 140; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->hot[i]));
   }
+  panic ("%s", gUiReport);
+}
+
+// Display lifecycle/client report (native-ufs-probe=16): read only the existing
+// LegacyDisplayProbe snapshots. This deliberately excludes GPU tuning and role stacks.
+static void displayReportThread (void *argument, wait_result_t)
+{
+  const unsigned delay = static_cast<unsigned> (reinterpret_cast<uintptr_t> (argument));
+  UfsUiSample *sample = static_cast<UfsUiSample *> (IOMalloc (sizeof (UfsUiSample)));
+  gUiReport = static_cast<char *> (IOMalloc (kUiReportBytes));
+  if (!sample || !gUiReport) panic ("NATIVE_UFS display report: allocation failed");
+  IOSleep (delay * 1000);
+  sampleUfsUi (sample);
+  size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
+                        "NATIVE_UFS display report v4 after %u s\n"
+                        "lifecycle stage=%u probe=%u start=%u registration=%u gopMap=%llx\n"
+                        "iosurface status=%x found=%u pm=%u/%x client calls=%u status=%x lastpid=%d\n",
+                        delay, sample->stage, sample->probeMatch, sample->startResult,
+                        sample->registration, (unsigned long long)sample->gopMap,
+                        sample->surfaceStatus, sample->surfaceFound, sample->pmStage,
+                        sample->pmStatus, sample->clientCalls, sample->clientStatus, sample->clientPid));
+  if (sample->clients[0]) used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "%s\n", sample->clients));
+  else used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "mfb clients: none recorded\n"));
+  if (sample->state[0]) used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "state %s\n", sample->state));
+  if (sample->props[0]) used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "properties %.480s\n", sample->props));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "swap accepted=%u rejected=%u gpu offers=%llu completions=%llu failures=%llu submissions=%u\n",
+                    sample->accepted, sample->rejected,
+                    (unsigned long long)sample->offers, (unsigned long long)sample->completions,
+                    (unsigned long long)sample->failures, sample->submissions));
   panic ("%s", gUiReport);
 }
 
@@ -2400,6 +2464,20 @@ bool NativeUfs::start (IOService *provider)
     thread_t thread = nullptr;
     if (kernel_thread_start (statsThread, reinterpret_cast<void *> (static_cast<uintptr_t> (delay)), &thread) != KERN_SUCCESS) {
       panic ("NATIVE_UFS memory snapshot: cannot start the thread");
+    }
+    thread_deallocate (thread);
+    return true;
+  }
+  if (probe == 16) {
+    unsigned delay = 120;
+    PE_parse_boot_argn ("native-ufs-stats-delay", &delay, sizeof (delay));
+    if (delay < 30 || delay > 600) delay = 120;
+    if (!startRoot (provider)) {
+      panic ("NATIVE_UFS display report: root start failed");
+    }
+    thread_t thread = nullptr;
+    if (kernel_thread_start (displayReportThread, reinterpret_cast<void *> (static_cast<uintptr_t> (delay)), &thread) != KERN_SUCCESS) {
+      panic ("NATIVE_UFS display report: cannot start the report thread");
     }
     thread_deallocate (thread);
     return true;
