@@ -2083,10 +2083,12 @@ static void statsThread (void *argument, wait_result_t)
          memorystatus_available_pages, max_mem, nprocs, native_ufs_block_reads);
 }
 
-// Process/UI report (native-ufs-probe=15): consume only the complete snapshots that
-// BootProgress already publishes. The report worker never enumerates processes,
-// changes launchd policy, writes the UFS log, or alters display/GPU defaults.
+// Process/UI report (native-ufs-probe=15): use the existing bounded process capture
+// from this separate report thread when BootProgress/BootProcessWorker is absent.
+// The capture's own busy flag prevents reentry. No launchd policy, UFS log writes,
+// or display/GPU defaults are changed.
 extern "C" {
+extern void boot_process_capture (void) __attribute__((weak_import));
 extern void boot_process_snapshot (void) __attribute__((weak_import));
 extern size_t boot_progress_spawn_rows (char *, size_t) __attribute__((weak_import));
 extern unsigned boot_ui_trace_hot_rows (char [][120], unsigned) __attribute__((weak_import));
@@ -2120,6 +2122,7 @@ constexpr size_t kUiReportBytes = 16384;
 static void sampleUfsUi (UfsUiSample *sample)
 {
   memset (sample, 0, sizeof (*sample));
+  if (boot_process_capture && boot_process_passes == 0) boot_process_capture ();
   if (boot_process_snapshot) {
     boot_process_snapshot ();
     if (&boot_process_rows) memcpy (sample->rows, boot_process_rows, sizeof (sample->rows));
@@ -2194,7 +2197,7 @@ static void processReportThread (void *argument, wait_result_t)
     "launchd", "WindowServer", "SpringBoard", "backboardd", "iconservicesagent", "wifid"
   };
   size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
-                          "NATIVE_UFS process/UI report after %u s (+5 s second sample)\n"
+                          "NATIVE_UFS process/UI report v2 after %u s (+5 s second sample)\n"
                           "worker passes=%u->%u seen=%u->%u attempts=%u->%u busy=%u->%u\n",
                           delay, first->passes, second->passes, first->seen, second->seen,
                           first->attempts, second->attempts, first->busy, second->busy));
