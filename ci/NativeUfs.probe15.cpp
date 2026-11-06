@@ -2101,6 +2101,9 @@ extern volatile uint32_t native_legacy_registration_calls, native_legacy_surface
 extern volatile uint32_t native_legacy_pm_stage, native_legacy_client_calls;
 extern volatile int native_legacy_surface_status, native_legacy_pm_status, native_legacy_client_status;
 extern volatile int native_legacy_client_pid;
+extern volatile uint64_t native_legacy_client_object;
+extern char native_legacy_client_class[64];
+extern void proc_name (int, char *, int) __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_map;
 extern char boot_process_rows[10][120] __attribute__((weak_import));
 extern volatile unsigned boot_process_passes, boot_process_seen __attribute__((weak_import));
@@ -2129,6 +2132,9 @@ struct UfsUiSample {
   uint32_t stage, startResult, probeMatch, registration, surfaceFound, pmStage, clientCalls;
   int surfaceStatus, pmStatus, clientStatus, clientPid;
   uint64_t gopMap;
+  uint64_t clientObject;
+  char clientClass[64];
+  char clientName[32];
   char clients[2200];
   char state[256];
   char props[512];
@@ -2151,6 +2157,10 @@ static void sampleUfsUi (UfsUiSample *sample)
   sample->clientCalls = native_legacy_client_calls;
   sample->clientStatus = native_legacy_client_status;
   sample->clientPid = native_legacy_client_pid;
+  sample->clientObject = native_legacy_client_object;
+  memcpy (sample->clientClass, native_legacy_client_class, sizeof (sample->clientClass));
+  sample->clientClass[sizeof (sample->clientClass) - 1] = 0;
+  if (proc_name && sample->clientPid > 0) proc_name (sample->clientPid, sample->clientName, sizeof (sample->clientName));
   sample->gopMap = native_legacy_gop_map;
   if (native_legacy_clients_dump) native_legacy_clients_dump (sample->clients, sizeof (sample->clients));
   if (native_legacy_state_words) native_legacy_state_words (sample->state, sizeof (sample->state));
@@ -2290,13 +2300,15 @@ static void displayReportThread (void *argument, wait_result_t)
   IOSleep (delay * 1000);
   sampleUfsUi (sample);
   size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
-                        "NATIVE_UFS display report v4 after %u s\n"
+                        "NATIVE_UFS display report v5 after %u s\n"
                         "lifecycle stage=%u probe=%u start=%u registration=%u gopMap=%llx\n"
-                        "iosurface status=%x found=%u pm=%u/%x client calls=%u status=%x lastpid=%d\n",
+                        "iosurface status=%x found=%u pm=%u/%x client calls=%u status=%x lastpid=%d\n"
+                        "client object=%llx class=%s name=%s\n",
                         delay, sample->stage, sample->probeMatch, sample->startResult,
                         sample->registration, (unsigned long long)sample->gopMap,
                         sample->surfaceStatus, sample->surfaceFound, sample->pmStage,
-                        sample->pmStatus, sample->clientCalls, sample->clientStatus, sample->clientPid));
+                        sample->pmStatus, sample->clientCalls, sample->clientStatus, sample->clientPid,
+                        (unsigned long long)sample->clientObject, sample->clientClass, sample->clientName));
   if (sample->clients[0]) used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                         "%s\n", sample->clients));
   else used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
