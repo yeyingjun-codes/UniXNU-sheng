@@ -2092,6 +2092,7 @@ extern void boot_process_capture (void) __attribute__((weak_import));
 extern void boot_process_snapshot (void) __attribute__((weak_import));
 extern size_t boot_progress_spawn_rows (char *, size_t) __attribute__((weak_import));
 extern unsigned boot_ui_trace_hot_rows (char [][120], unsigned) __attribute__((weak_import));
+extern unsigned boot_ui_trace_role_rows (unsigned, char [][120], unsigned, unsigned) __attribute__((weak_import));
 extern char boot_process_rows[10][120] __attribute__((weak_import));
 extern volatile unsigned boot_process_passes, boot_process_seen __attribute__((weak_import));
 extern volatile unsigned boot_process_attempts, boot_process_busy __attribute__((weak_import));
@@ -2114,6 +2115,8 @@ struct UfsUiSample {
   uint32_t dpu[20];
   char spawn[8192];
   char hot[4][120];
+  unsigned roleCount[3];
+  char role[3][12][120];
 };
 
 static char *gUiReport;
@@ -2143,6 +2146,11 @@ static void sampleUfsUi (UfsUiSample *sample)
   for (unsigned i = 0; i < 20; ++i) sample->dpu[i] = native_dpu_stats[i];
   if (boot_progress_spawn_rows) boot_progress_spawn_rows (sample->spawn, sizeof (sample->spawn));
   if (boot_ui_trace_hot_rows) boot_ui_trace_hot_rows (sample->hot, 4);
+  if (boot_ui_trace_role_rows) {
+    for (unsigned role = 0; role < 3; ++role) {
+      sample->roleCount[role] = boot_ui_trace_role_rows (role, sample->role[role], 12, 2);
+    }
+  }
 }
 
 static bool ufsContains (const char *haystack, const char *needle)
@@ -2197,7 +2205,7 @@ static void processReportThread (void *argument, wait_result_t)
     "launchd", "WindowServer", "SpringBoard", "backboardd", "iconservicesagent", "wifid"
   };
   size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
-                          "NATIVE_UFS process/UI report v2 after %u s (+5 s second sample)\n"
+                          "NATIVE_UFS process/UI report v3 after %u s (+5 s second sample)\n"
                           "worker passes=%u->%u seen=%u->%u attempts=%u->%u busy=%u->%u\n",
                           delay, first->passes, second->passes, first->seen, second->seen,
                           first->attempts, second->attempts, first->busy, second->busy));
@@ -2227,6 +2235,13 @@ static void processReportThread (void *argument, wait_result_t)
                     first->dpu[13], second->dpu[14]));
   } else {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "dpu unavailable (no published counters)\n"));
+  }
+  for (unsigned role = 0; role < 3 && used < kUiReportBytes - 160; ++role) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                      "role %u trace rows=%u\n", role, second->roleCount[role]));
+    for (unsigned row = 0; row < second->roleCount[role] && row < 12 && used < kUiReportBytes - 140; ++row) {
+      used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->role[role][row]));
+    }
   }
   for (unsigned i = 0; i < 4 && second->hot[i][0] && used < kUiReportBytes - 140; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->hot[i]));
