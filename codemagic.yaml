@@ -317,8 +317,8 @@ workflows:
         script: |
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
-          python3 "$CM_BUILD_DIR/ci/enable_default_framebuffer.py" "$ROOT/UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp" "$ROOT/device/scripts/legacy-display-24A446.json"
-          grep -n -A8 "reviewed owned factory" "$ROOT/UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp"
+          python3 "$CM_BUILD_DIR/ci/enable_default_framebuffer.py" "$ROOT/UniXNU/scripts/legacy-display-24A446.json" "$ROOT/device/scripts/legacy-display-24A446.json"
+          grep -n '"default_surface"' "$ROOT/UniXNU/scripts/legacy-display-24A446.json"
 
       - name: Add UniXNU probe logging
         script: |
