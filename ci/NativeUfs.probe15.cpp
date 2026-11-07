@@ -2309,7 +2309,7 @@ static void displayReportThread (void *argument, wait_result_t)
   IOSleep (delay * 1000);
   sampleUfsUi (sample);
   size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
-                        "NATIVE_UFS display report v6 after %u s\n"
+                        "NATIVE_UFS display report v7 after %u s\n"
                         "lifecycle stage=%u probe=%u start=%u registration=%u gopMap=%llx\n"
                         "iosurface status=%x found=%u pm=%u/%x client calls=%u status=%x lastpid=%d\n"
                         "client object=%llx class=%s\n"
