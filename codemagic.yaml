@@ -313,6 +313,13 @@ workflows:
           grep -n "if (probe == 15)" "$DST"
           shasum -a 256 "$CM_BUILD_DIR/NativeUfs.before-probe15.cpp" "$DST"
 
+      - name: Enable the original default framebuffer creation gate
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          python3 "$CM_BUILD_DIR/ci/enable_default_framebuffer.py" "$ROOT/UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp"
+          grep -n -A10 "original 24A446 create_default" "$ROOT/UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp"
+
       - name: Add UniXNU probe logging
         script: |
           set -euo pipefail
