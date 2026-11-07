@@ -1,23 +1,28 @@
 from pathlib import Path
+import json
 import sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
-old = "        OSSafeReleaseNULL(mapping);return valid;"
-new = """        OSSafeReleaseNULL(mapping);
-        if(valid) {
-            // The original 24A446 create_default_fb_surface() gates on bit 0
-            // at object+0x1cc0. The original startHardware slot is a false stub,
-            // so the owned hardware backend must publish this state after a
-            // validated GOP mapping. Apple retains the actual surface factory.
-            unsigned char *state=reinterpret_cast<unsigned char *>(this);
-            uint8_t flags=0;
-            memcpy(&flags,state+0x1cc0,1);
-            flags|=1;
-            memcpy(state+0x1cc0,&flags,1);
-        }
-        return valid;"""
-if text.count(old) != 1:
-    raise SystemExit("expected exactly one startHardware return")
-path.write_text(text.replace(old, new))
-print("enabled the original default framebuffer creation gate after GOP mapping")
+source_path = Path(sys.argv[1])
+abi_path = Path(sys.argv[2])
+text = source_path.read_text()
+anchor = """    IOReturn newUserClient(task_t task,void *security,UInt32 type,IOUserClient **client) override {
+"""
+override = """    void create_default_fb_surface() override {
+        // Keep Apple's implementation first. If its internal creation gate is
+        // closed, use the reviewed owned factory instead of forcing that gate.
+        IOMobileFramebufferLegacy::create_default_fb_surface();
+        installDefaultSurface(native_legacy_gop_width,native_legacy_gop_height);
+    }
+"""
+if text.count(anchor) != 1:
+    raise SystemExit("expected exactly one newUserClient anchor")
+source_path.write_text(text.replace(anchor, override + anchor))
+
+abi = json.loads(abi_path.read_text())
+if abi["display"]["default_surface"] not in (7000, 7008):
+    raise SystemExit("unexpected default_surface offset")
+# Original create_default_fb_surface stores the allocated object at 0x1b60;
+# stop releases and clears the same field. The previous 7000 was inconsistent.
+abi["display"]["default_surface"] = 7008
+abi_path.write_text(json.dumps(abi, indent=2) + "\n")
+print("installed the owned default-surface fallback at the binary-verified offset 7008")
