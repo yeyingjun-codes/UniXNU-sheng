@@ -2136,7 +2136,7 @@ struct UfsUiSample {
   char clientClass[64];
   uint32_t originalWidth, originalHeight;
   uint8_t defaultFlag;
-  uint64_t surfaceRoot, defaultSurface;
+  uint64_t surfaceRoot, defaultSurface, defaultSurface0;
   char clients[2200];
   char state[256];
   char props[512];
@@ -2170,6 +2170,7 @@ static void sampleUfsUi (UfsUiSample *sample)
     memcpy (&sample->defaultFlag, object + 7360, 1);
     memcpy (&sample->surfaceRoot, object + 6976, 8);
     memcpy (&sample->defaultSurface, object + 7008, 8);
+    memcpy (&sample->defaultSurface0, object + 7000, 8);
   }
   if (native_legacy_clients_dump) native_legacy_clients_dump (sample->clients, sizeof (sample->clients));
   if (native_legacy_state_words) native_legacy_state_words (sample->state, sizeof (sample->state));
@@ -2309,18 +2310,19 @@ static void displayReportThread (void *argument, wait_result_t)
   IOSleep (delay * 1000);
   sampleUfsUi (sample);
   size_t used = static_cast<size_t> (snprintf (gUiReport, kUiReportBytes,
-                        "NATIVE_UFS display report v9 after %u s\n"
+                        "NATIVE_UFS display report v9.1 after %u s\n"
                         "lifecycle stage=%u probe=%u start=%u registration=%u gopMap=%llx\n"
                         "iosurface status=%x found=%u pm=%u/%x client calls=%u status=%x lastpid=%d\n"
                         "client object=%llx class=%s\n"
-                        "original %ux%u flag=%x root=%llx default7008=%llx\n",
+                        "original %ux%u flag=%x root=%llx default7008=%llx default7000=%llx\n",
                         delay, sample->stage, sample->probeMatch, sample->startResult,
                         sample->registration, (unsigned long long)sample->gopMap,
                         sample->surfaceStatus, sample->surfaceFound, sample->pmStage,
                         sample->pmStatus, sample->clientCalls, sample->clientStatus, sample->clientPid,
                         (unsigned long long)sample->clientObject, sample->clientClass,
                         sample->originalWidth, sample->originalHeight, sample->defaultFlag,
-                        (unsigned long long)sample->surfaceRoot, (unsigned long long)sample->defaultSurface));
+                        (unsigned long long)sample->surfaceRoot, (unsigned long long)sample->defaultSurface,
+                        (unsigned long long)sample->defaultSurface0));
   if (sample->clients[0]) used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                         "%s\n", sample->clients));
   else used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
