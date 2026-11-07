@@ -11,7 +11,9 @@ override = """    void create_default_fb_surface() override {
         // Keep Apple's implementation first. If its internal creation gate is
         // closed, use the reviewed owned factory instead of forcing that gate.
         IOMobileFramebufferLegacy::create_default_fb_surface();
-        installDefaultSurface(native_legacy_gop_width,native_legacy_gop_height);
+        uint32_t width=0,height=0;
+        getDisplayDimensions(&width,&height);
+        installDefaultSurface(width,height);
     }
 """
 if text.count(anchor) != 1:
