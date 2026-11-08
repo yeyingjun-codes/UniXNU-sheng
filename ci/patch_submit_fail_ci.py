@@ -24,7 +24,15 @@ helper = '''#define SUBMIT_FAIL(reason, line, handle, bytes, iova, vm_iova, stat
 marker = 'IOReturn NativeAdrenoSubmit::submit(NativeAdrenoVm *vm,const NativeAdrenoSubmitBuffer *buffers,size_t count,'
 if text.count(marker) != 1:
     raise SystemExit('submit marker not found')
-text = text.replace(marker, helper + marker, 1)
+# Insert the SUBMIT_FAIL macro right after the submit_fail array declaration,
+# so it is visible to every function in the file.
+text = text.replace(addition, addition + '\n\n' + helper, 1)
+
+# Undo the mistaken replacement in attach() (it shares the same guard text).
+text = text.replace(
+    'if(!attached_ || poisoned_) SUBMIT_FAIL(2, __LINE__, 0, 0, 0, 0, kIOReturnNotReady);\n    if(mode>2 || (mode && !write) || outstanding())return kIOReturnBadArgument;',
+    'if(!attached_ || poisoned_)return kIOReturnNotReady;\n    if(mode>2 || (mode && !write) || outstanding())return kIOReturnBadArgument;',
+    1)
 
 repls = [
     ('if(!fence)return kIOReturnBadArgument;*fence=0;',
