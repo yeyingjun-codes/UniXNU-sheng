@@ -17,8 +17,8 @@ text = text.replace(anchor, addition, 1)
 helper = '''#define SUBMIT_FAIL(reason, line, handle, bytes, iova, vm_iova, status) \\
     do { native_adreno_submit_fail[0]=reason; native_adreno_submit_fail[1]=line; \\
          native_adreno_submit_fail[2]=(uint32_t)(handle); native_adreno_submit_fail[3]=(uint32_t)(bytes); \\
-         native_adreno_submit_fail[4]=(uint32_t)(iova); native_adreno_submit_fail[5]=(uint32_t)((iova)>>32); \\
-         native_adreno_submit_fail[6]=(uint32_t)(vm_iova); native_adreno_submit_fail[7]=(uint32_t)((vm_iova)>>32); \\
+         native_adreno_submit_fail[4]=(uint32_t)(uint64_t)(iova); native_adreno_submit_fail[5]=(uint32_t)((uint64_t)(iova)>>32); \\
+         native_adreno_submit_fail[6]=(uint32_t)(uint64_t)(vm_iova); native_adreno_submit_fail[7]=(uint32_t)((uint64_t)(vm_iova)>>32); \\
          return status; } while(0)
 '''
 marker = 'IOReturn NativeAdrenoSubmit::submit(NativeAdrenoVm *vm,const NativeAdrenoSubmitBuffer *buffers,size_t count,'
