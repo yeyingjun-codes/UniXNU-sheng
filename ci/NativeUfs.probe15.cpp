@@ -2117,6 +2117,12 @@ extern volatile uint64_t native_gop_gpu_failures __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_ibs[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_stats[20] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_ib_log[4][32] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_ib_log_count __attribute__((weak_import));
+extern volatile uint32_t native_adreno_tl_count __attribute__((weak_import));
+extern volatile uint32_t native_adreno_fence_pending[8] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_stall_log[32][8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_stall_log_count __attribute__((weak_import));
 }
 
 struct UfsUiSample {
@@ -2295,6 +2301,41 @@ static void processReportThread (void *argument, wait_result_t)
   }
   for (unsigned i = 0; i < 4 && second->hot[i][0] && used < kUiReportBytes - 140; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->hot[i]));
+  }
+  if (native_adreno_tl_count) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                      "adreno timeline count=%u\n", native_adreno_tl_count));
+  }
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "fence pending buckets %u %u %u %u %u %u %u %u\n",
+                    native_adreno_fence_pending[0], native_adreno_fence_pending[1],
+                    native_adreno_fence_pending[2], native_adreno_fence_pending[3],
+                    native_adreno_fence_pending[4], native_adreno_fence_pending[5],
+                    native_adreno_fence_pending[6], native_adreno_fence_pending[7]));
+  if (native_adreno_ib_log_count) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                      "ib log count=%u\n", native_adreno_ib_log_count));
+    for (unsigned i = 0; i < 4 && used < kUiReportBytes - 260; ++i) {
+      used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "ib%u fence=%u iova=%08x%08x bytes=%u head=%08x %08x %08x %08x\n",
+                        i, native_adreno_ib_log[i][0], native_adreno_ib_log[i][1],
+                        native_adreno_ib_log[i][2], native_adreno_ib_log[i][3],
+                        native_adreno_ib_log[i][4], native_adreno_ib_log[i][5],
+                        native_adreno_ib_log[i][6], native_adreno_ib_log[i][7]));
+    }
+  }
+  if (native_adreno_stall_log_count) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                      "stall log count=%u\n", native_adreno_stall_log_count));
+    const unsigned begin = native_adreno_stall_log_count > 8 ? native_adreno_stall_log_count - 8 : 0;
+    for (unsigned i = begin; i < native_adreno_stall_log_count && i < begin + 8 && used < kUiReportBytes - 220; ++i) {
+      volatile uint64_t *slot = native_adreno_stall_log[i & 31];
+      used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "stall%u t=%llu fence=%llu event=%llu pending=%llu rw=%llx queue=%llx\n",
+                        i, (unsigned long long)slot[0], (unsigned long long)slot[1],
+                        (unsigned long long)slot[2], (unsigned long long)slot[3],
+                        (unsigned long long)slot[4], (unsigned long long)slot[5]));
+    }
   }
   panic ("%s", gUiReport);
 }
