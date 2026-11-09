@@ -9,7 +9,8 @@ text = path.read_text()
 
 anchor = 'extern "C" {volatile uint32_t native_adreno_submit_ibs[4];}'
 addition = '''extern "C" {volatile uint32_t native_adreno_submit_ibs[4];}
-extern "C" {volatile uint32_t native_adreno_submit_fail[8];}  /* [0]=reason [1]=line [2]=handle [3]=bytes [4]=iova_lo [5]=iova_hi [6]=vm_iova_lo [7]=vm_iova_hi */'''
+extern "C" {volatile uint32_t native_adreno_submit_fail[8];}  /* [0]=reason [1]=line [2]=handle [3]=bytes [4]=iova_lo [5]=iova_hi [6]=vm_iova_lo [7]=vm_iova_hi */
+extern "C" {volatile uint32_t native_adreno_cp_state[32];}   /* [0..21]=stallState [22]=sampled [23]=lastSubmitted [24]=completedFence [25]=submissions [26]=readPointer [27]=writePointer [28]=completed before the wait */'''
 if text.count(anchor) != 1:
     raise SystemExit('submit_ibs anchor not found')
 text = text.replace(anchor, addition, 1)
@@ -63,8 +64,30 @@ repls = [
      'status=useVm(vm,clock,index);\n    if(status) {\n        for(size_t i=0;i<handle_count;++i) {vm_->retireJobAfterCompletion(handles[i]);++stats_.references_retired;}\n        SUBMIT_FAIL(13, __LINE__, 0, 0, 0, 0, status);\n    }'),
     ('if(status) {\n        if(!value)fence_issued_=base;\n        /* A poisoned ring may already have consumed the WPTR write, so the\n         * referenced buffers cannot be retired here. */\n        if(target->poisoned()) {\n            *job=Job{};++stats_.poisoned_jobs;\n            for(size_t i=0;i<handle_count;++i)job->handles[i]=handles[i];\n            job->count=handle_count;job->queue=queue;job->active=true;job->vm_next=vm_->nextHandle();job->vm=vm;\n            return poison();\n        }\n        while(handle_count) {vm_->retireJobAfterCompletion(handles[--handle_count]);++stats_.references_retired;}\n        /* No room in the ring yet: the caller waits for an earlier job and submits again. */\n        return status==kIOReturnNoResources?kIOReturnBusy:status;\n    }',
      'if(status) {\n        if(!value)fence_issued_=base;\n        /* A poisoned ring may already have consumed the WPTR write, so the\n         * referenced buffers cannot be retired here. */\n        if(target->poisoned()) {\n            *job=Job{};++stats_.poisoned_jobs;\n            for(size_t i=0;i<handle_count;++i)job->handles[i]=handles[i];\n            job->count=handle_count;job->queue=queue;job->active=true;job->vm_next=vm_->nextHandle();job->vm=vm;\n            SUBMIT_FAIL(14, __LINE__, 0, 0, 0, 0, poison());\n        }\n        while(handle_count) {vm_->retireJobAfterCompletion(handles[--handle_count]);++stats_.references_retired;}\n        /* No room in the ring yet: the caller waits for an earlier job and submits again. */\n        SUBMIT_FAIL(15, __LINE__, 0, 0, 0, 0, status==kIOReturnNoResources?kIOReturnBusy:status);\n    }'),
+    ('        const uint32_t slot=native_adreno_ib_log_count&3;uint32_t head[28];\n        (void)vm_->peekWords(buffers[0].iova,head,28);',
+     '''        const uint32_t slot=native_adreno_ib_log_count&3;uint32_t head[28]={};
+        /* probe: a failed peek must not leave stack garbage in the log */
+        if(vm_->peekWords(buffers[0].iova,head,28)) { for(unsigned k=0;k<28;++k) head[k]=0xdeadbeefu; }'''),
+    ('    *fence=value;\n    driveSwitch(clock);\n    return kIOReturnSuccess;',
+     '''    *fence=value;
+    /* probe: sample the CP once after the submission so the report can show whether it ran */
+    {
+        native_adreno_cp_state[23]=target->lastSubmitted();
+        native_adreno_cp_state[25]=target->submissions();
+        native_adreno_cp_state[26]=target->readPointer();
+        native_adreno_cp_state[27]=target->writePointer();
+        native_adreno_cp_state[28]=target->completedFence();
+        IOSleep(600);
+        uint32_t cpstate[NativeAdrenoRingStallWords]={};
+        if(target->stallState(cpstate)==kIOReturnSuccess) {
+            for(unsigned i=0;i<NativeAdrenoRingStallWords;++i)native_adreno_cp_state[i]=cpstate[i];
+            native_adreno_cp_state[22]=1;
+        }
+        native_adreno_cp_state[24]=target->completedFence();
+    }
+    driveSwitch(clock);
+    return kIOReturnSuccess;'''),
 ]
-
 applied = 0
 for old, new in repls:
     if old in text:
