@@ -354,10 +354,6 @@ workflows:
           set -o pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
           df -h / | tail -2
-          du -sh "$HOME/Library/Caches/Homebrew" 2>/dev/null || true
-          rm -rf "$HOME/Library/Caches/Homebrew/downloads" 2>/dev/null || true
-          rm -rf "$ROOT/UniXNU/out/ipsw" 2>/dev/null || true
-          df -h / | tail -2
           export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH"
           echo "cargo: $(command -v cargo) $(cargo --version 2>&1)"
           export UNIXNU_UNIQUE_CHIP_ID="9732b499"
