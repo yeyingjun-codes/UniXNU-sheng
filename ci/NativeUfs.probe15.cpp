@@ -2266,6 +2266,44 @@ static void processReportThread (void *argument, wait_result_t)
                           "worker passes=%u->%u seen=%u->%u attempts=%u->%u busy=%u->%u\n",
                           delay, first->passes, second->passes, first->seen, second->seen,
                           first->attempts, second->attempts, first->busy, second->busy));
+  /* The Adreno and submit-fail block comes first: the per-process stacks below can
+   * fill the buffer, and these lines are the ones that locate the GPU stall. */
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "adreno timeline count=%u\n", native_adreno_tl_count));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "fence pending buckets %u %u %u %u %u %u %u %u\n",
+                    native_adreno_fence_pending[0], native_adreno_fence_pending[1],
+                    native_adreno_fence_pending[2], native_adreno_fence_pending[3],
+                    native_adreno_fence_pending[4], native_adreno_fence_pending[5],
+                    native_adreno_fence_pending[6], native_adreno_fence_pending[7]));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "ib log count=%u stall log count=%u\n",
+                    native_adreno_ib_log_count, native_adreno_stall_log_count));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "submit fail reason=%u line=%u handle=%08x bytes=%u iova=%08x%08x vm=%08x%08x\n",
+                    native_adreno_submit_fail[0], native_adreno_submit_fail[1],
+                    native_adreno_submit_fail[2], native_adreno_submit_fail[3],
+                    native_adreno_submit_fail[4], native_adreno_submit_fail[5],
+                    native_adreno_submit_fail[6], native_adreno_submit_fail[7]));
+  for (unsigned i = 0; i < 2 && native_adreno_ib_log_count && used < kUiReportBytes - 260; ++i) {
+    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                      "ib%u fence=%u iova=%08x%08x bytes=%u head=%08x %08x %08x %08x\n",
+                      i, native_adreno_ib_log[i][0], native_adreno_ib_log[i][1],
+                      native_adreno_ib_log[i][2], native_adreno_ib_log[i][3],
+                      native_adreno_ib_log[i][4], native_adreno_ib_log[i][5],
+                      native_adreno_ib_log[i][6], native_adreno_ib_log[i][7]));
+  }
+  if (native_adreno_stall_log_count) {
+    const unsigned begin = native_adreno_stall_log_count > 4 ? native_adreno_stall_log_count - 4 : 0;
+    for (unsigned i = begin; i < native_adreno_stall_log_count && i < begin + 4 && used < kUiReportBytes - 220; ++i) {
+      volatile uint64_t *slot = native_adreno_stall_log[i & 31];
+      used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                        "stall%u t=%llu fence=%llu event=%llu pending=%llu rw=%llx queue=%llx\n",
+                        i, (unsigned long long)slot[0], (unsigned long long)slot[1],
+                        (unsigned long long)slot[2], (unsigned long long)slot[3],
+                        (unsigned long long)slot[4], (unsigned long long)slot[5]));
+    }
+  }
   for (unsigned i = 0; i < 6 && used < kUiReportBytes - 300; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "A %s\n", first->rows[i]));
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "B %s\n", second->rows[i]));
@@ -2296,48 +2334,12 @@ static void processReportThread (void *argument, wait_result_t)
   for (unsigned role = 0; role < 3 && used < kUiReportBytes - 160; ++role) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                       "role %u trace rows=%u\n", role, second->roleCount[role]));
-    for (unsigned row = 0; row < second->roleCount[role] && row < 12 && used < kUiReportBytes - 140; ++row) {
+    for (unsigned row = 0; row < second->roleCount[role] && row < 6 && used < kUiReportBytes - 140; ++row) {
       used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->role[role][row]));
     }
   }
   for (unsigned i = 0; i < 4 && second->hot[i][0] && used < kUiReportBytes - 140; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used, "%s\n", second->hot[i]));
-  }
-  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                    "adreno timeline count=%u\n", native_adreno_tl_count));
-  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                    "fence pending buckets %u %u %u %u %u %u %u %u\n",
-                    native_adreno_fence_pending[0], native_adreno_fence_pending[1],
-                    native_adreno_fence_pending[2], native_adreno_fence_pending[3],
-                    native_adreno_fence_pending[4], native_adreno_fence_pending[5],
-                    native_adreno_fence_pending[6], native_adreno_fence_pending[7]));
-  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                    "ib log count=%u stall log count=%u\n",
-                    native_adreno_ib_log_count, native_adreno_stall_log_count));
-  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                    "submit fail reason=%u line=%u handle=%08x bytes=%u iova=%08x%08x vm=%08x%08x\n",
-                    native_adreno_submit_fail[0], native_adreno_submit_fail[1],
-                    native_adreno_submit_fail[2], native_adreno_submit_fail[3],
-                    native_adreno_submit_fail[4], native_adreno_submit_fail[5],
-                    native_adreno_submit_fail[6], native_adreno_submit_fail[7]));
-  for (unsigned i = 0; i < 4 && native_adreno_ib_log_count && used < kUiReportBytes - 260; ++i) {
-    used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                      "ib%u fence=%u iova=%08x%08x bytes=%u head=%08x %08x %08x %08x\n",
-                      i, native_adreno_ib_log[i][0], native_adreno_ib_log[i][1],
-                      native_adreno_ib_log[i][2], native_adreno_ib_log[i][3],
-                      native_adreno_ib_log[i][4], native_adreno_ib_log[i][5],
-                      native_adreno_ib_log[i][6], native_adreno_ib_log[i][7]));
-  }
-  if (native_adreno_stall_log_count) {
-    const unsigned begin = native_adreno_stall_log_count > 8 ? native_adreno_stall_log_count - 8 : 0;
-    for (unsigned i = begin; i < native_adreno_stall_log_count && i < begin + 8 && used < kUiReportBytes - 220; ++i) {
-      volatile uint64_t *slot = native_adreno_stall_log[i & 31];
-      used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
-                        "stall%u t=%llu fence=%llu event=%llu pending=%llu rw=%llx queue=%llx\n",
-                        i, (unsigned long long)slot[0], (unsigned long long)slot[1],
-                        (unsigned long long)slot[2], (unsigned long long)slot[3],
-                        (unsigned long long)slot[4], (unsigned long long)slot[5]));
-    }
   }
   panic ("%s", gUiReport);
 }
