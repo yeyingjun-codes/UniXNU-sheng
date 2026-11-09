@@ -101,7 +101,7 @@ workflows:
         REPO_DEVICE: "https://github.com/UniXNU/UniXNU-sheng.git"
         REPO_UEFI: "https://github.com/UniXNU/uefi-sheng.git"
         UNIXNU_REF: "f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63"
-        DEVICE_REF: "460179565a018c741b93e0b1efa07c55d4de497a"
+        DEVICE_REF: "571fcc972a4ea3e8c402183ba98a0a8f67a4750a"
         UNIXNU_UNIQUE_CHIP_ID: "9732b499"
         HOMEBREW_NO_AUTO_UPDATE: "1"
         HOMEBREW_NO_INSTALL_CLEANUP: "1"
