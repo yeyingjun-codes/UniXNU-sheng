@@ -2124,6 +2124,7 @@ extern volatile uint32_t native_adreno_fence_pending[8] __attribute__((weak_impo
 extern volatile uint64_t native_adreno_stall_log[32][8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_stall_log_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_fail[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_cp_state[32] __attribute__((weak_import));
 }
 
 struct UfsUiSample {
@@ -2285,6 +2286,25 @@ static void processReportThread (void *argument, wait_result_t)
                     native_adreno_submit_fail[2], native_adreno_submit_fail[3],
                     native_adreno_submit_fail[4], native_adreno_submit_fail[5],
                     native_adreno_submit_fail[6], native_adreno_submit_fail[7]));
+  /* The CP side: submitted/completed fences and the CP registers read right after the submission. */
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "cp sub=%u done=%u subs=%u rptr=%08x wptr=%08x sampled=%u\n",
+                    native_adreno_cp_state[23], native_adreno_cp_state[24], native_adreno_cp_state[25],
+                    native_adreno_cp_state[26], native_adreno_cp_state[27], native_adreno_cp_state[22]));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "cp 00-07 %08x %08x %08x %08x %08x %08x %08x %08x\n",
+                    native_adreno_cp_state[0], native_adreno_cp_state[1], native_adreno_cp_state[2],
+                    native_adreno_cp_state[3], native_adreno_cp_state[4], native_adreno_cp_state[5],
+                    native_adreno_cp_state[6], native_adreno_cp_state[7]));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "cp 08-15 %08x %08x %08x %08x %08x %08x %08x %08x\n",
+                    native_adreno_cp_state[8], native_adreno_cp_state[9], native_adreno_cp_state[10],
+                    native_adreno_cp_state[11], native_adreno_cp_state[12], native_adreno_cp_state[13],
+                    native_adreno_cp_state[14], native_adreno_cp_state[15]));
+  used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
+                    "cp 16-21 %08x %08x %08x %08x %08x %08x\n",
+                    native_adreno_cp_state[16], native_adreno_cp_state[17], native_adreno_cp_state[18],
+                    native_adreno_cp_state[19], native_adreno_cp_state[20], native_adreno_cp_state[21]));
   for (unsigned i = 0; i < 2 && native_adreno_ib_log_count && used < kUiReportBytes - 260; ++i) {
     used += static_cast<size_t> (snprintf (gUiReport + used, kUiReportBytes - used,
                       "ib%u fence=%u iova=%08x%08x bytes=%u head=%08x %08x %08x %08x\n",
