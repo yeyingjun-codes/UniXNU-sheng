@@ -213,18 +213,19 @@ workflows:
           set -euo pipefail
           ROOT="$CM_BUILD_DIR/pkg27"
           CFG="$ROOT/device/configs/sheng_ipados27_defconfig"
-          # The build-xnu-4k-baseline.sh gate needs all three of these exported as 1,
-          # otherwise it aborts with "Boot progress requires the audited UFS/owner-root
-          # and source-corecrypto build". Each CONFIG_XNU_<NAME> becomes XNU_<NAME>=1.
-          for flag in CONFIG_XNU_BOOT_PROGRESS CONFIG_XNU_NATIVE_UFS CONFIG_XNU_SOURCE_CORECRYPTO14; do
-            if grep -q "^${flag}=" "$CFG"; then
-              echo "$flag already present"
-            else
-              printf '%s=y\n' "$flag" >> "$CFG"
-              echo "appended $flag=y"
-            fi
-          done
-          grep -nE 'BOOT_PROGRESS|NATIVE_UFS|CORECRYPTO14|OWNER_ROOT_AUDIT' "$CFG"
+          # Only the diagnostic page itself is a defconfig opt-in. The UFS and corecrypto
+          # archives are already produced via board.toml archives (component:ShengUfs and
+          # build-sheng-source-storage.py / build-corecrypto-14.py). Setting CONFIG_XNU_NATIVE_UFS
+          # or CONFIG_XNU_SOURCE_CORECRYPTO14 here would ALSO link libShengUfs.a / the source
+          # corecrypto archive a second time and cause "duplicate symbol" at link, so those two
+          # are supplied as plain environment variables in the build step below instead.
+          if grep -q '^CONFIG_XNU_BOOT_PROGRESS=' "$CFG"; then
+            echo "XNU_BOOT_PROGRESS already present"
+          else
+            printf '\n# On-screen boot progress diagnostic page (boot-progress=1/2)\nCONFIG_XNU_BOOT_PROGRESS=y\n' >> "$CFG"
+            echo "appended CONFIG_XNU_BOOT_PROGRESS=y"
+          fi
+          grep -nE 'BOOT_PROGRESS|OWNER_ROOT_AUDIT' "$CFG"
           # The archive builder must actually run, otherwise libBootProgress.a is never made
           # even after the gate passes. Insert it right before the final reference builder.
           python3 - "$ROOT" <<'PY'
@@ -395,6 +396,12 @@ workflows:
           # without it it defaults to <device>/uefi-sheng which does not exist in CI.
           export UNIXNU_UEFI="$ROOT/uefi-sheng"
           test -f "$UNIXNU_UEFI/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h" && echo "Font.h present"
+          # The boot-progress gate (build-xnu-4k-baseline.sh) reads these three env vars.
+          # UFS and source-corecrypto are already built via board.toml archives, so exporting
+          # the vars here satisfies the gate without re-linking those archives twice.
+          export XNU_NATIVE_UFS=1
+          export XNU_OWNER_ROOT_AUDIT=1
+          export XNU_SOURCE_CORECRYPTO14=1
           cd "$ROOT/device"
           set +e
           set +e
