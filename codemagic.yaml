@@ -323,8 +323,11 @@ workflows:
               print('fileset_layout.py not at the pinned path; skipping')
           else:
               t = p.read_text()
-              old = "self.reserve('__DATA', self.roots['__DATA']['va'])"
-              new = "self.reserve('__DATA', self.hole('__DATA', self.segment('__DATA')['size']))"
+              # keep the original fixed placement: the __DATA root mapping is fragmented by
+              # retained kexts, so hole() fails with "No room for 3.6 MB". The original kernel
+              # address leaves the largest contiguous tail gap, which fits once the sampling
+              # ring is shrunk (native __DATA 3.6 MB vs the 4 MB budget).
+              pass
               if old in t:
                   p.write_text(t.replace(old, new))
                   print('prelink: native __DATA now placed via hole() (fits BootProgress growth)')
