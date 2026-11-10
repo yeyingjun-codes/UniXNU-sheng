@@ -1,174 +1,360 @@
 # Generated from the Codemagic sheng-package27 workflow.
+
 # The Codemagic free plan is out of build minutes, so this mirrors the same
+
 # steps on a GitHub-hosted macOS runner.
+
 name: UniXNU sheng package 27
+
 'on':
+
   workflow_dispatch: null
+
 jobs:
+
   build:
+
     runs-on: macos-latest
+
     timeout-minutes: 180
+
     env:
+
       REPO_UNIXNU: https://github.com/UniXNU/UniXNU.git
+
       REPO_DEVICE: https://github.com/UniXNU/UniXNU-sheng.git
+
       REPO_UEFI: https://github.com/UniXNU/uefi-sheng.git
+
       UNIXNU_REF: f61fd6c1be8a18ec83c4a80bd7355cbf5d435d63
+
       DEVICE_REF: 460179565a018c741b93e0b1efa07c55d4de497a
+
       UNIXNU_UNIQUE_CHIP_ID: 9732b499
+
       HOMEBREW_NO_AUTO_UPDATE: '1'
+
       HOMEBREW_NO_INSTALL_CLEANUP: '1'
+
       HOMEBREW_NO_ENV_HINTS: '1'
+
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
+
     - name: Runner info and disk headroom
+
       run: "set -euo pipefail\nsw_vers; uname -m\ndf -h / | tail -2\n# Pick the newest Xcode installed on the image.\nnewest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)\necho \"xcode candidates:\"; ls -d /Applications/Xcode*.app 2>/dev/null || true\nif [ -n \"$newest\" ]; then\n  echo \"selecting $newest\"\n  sudo xcode-select -s \"$newest/Contents/Developer\" || true\nfi\nxcodebuild -version || true\nxcrun --sdk iphoneos --show-sdk-version || true\n# Remove things this build does not need to keep the disk free.\nsudo rm -rf /Library/Developer/CoreSimulator/Caches/* 2>/dev/null || true\nsudo rm -rf \"$HOME/Library/Developer/Xcode/iOS DeviceSupport\"/* 2>/dev/null || true\ndf -h / | tail -2\n"
+
     - name: Host toolchain
+
       run: "set -euo pipefail\nbrew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup 2>&1 | tail -20\nexport RUSTUP_HOME=\"$HOME/.rustup\"\nexport CARGO_HOME=\"$HOME/.cargo\"\ncurl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh\nsh /tmp/rustup-init.sh -y --default-toolchain 1.98.0 --profile minimal --component rust-src --no-modify-path\nexport PATH=\"$CARGO_HOME/bin:$PATH\"\nfile \"$CARGO_HOME/bin/cargo\" || true\nver=\"$(cargo --version)\"\necho \"cargo --version => $ver\"\ncase \"$ver\" in cargo\\ 1.98.*) ;; *) echo \"FATAL: cargo proxy is not real cargo: $ver\"; exit 1;; esac\nrustc --version\necho \"check -Z acceptance\"\nRUSTC_BOOTSTRAP=1 cargo -Z help 2>&1 | head -3 || true\nllvm-as --version 2>/dev/null | head -1 || \"$(brew --prefix llvm)/bin/llvm-as\" --version | head -1\nmkdir -p \"$HOME/.local/bin\"\ncurl -fL --retry 3 -o /tmp/ipsw.tar.gz https://github.com/blacktop/ipsw/releases/download/v3.1.741/ipsw_3.1.741_macOS_arm64.tar.gz\ntar -xzf /tmp/ipsw.tar.gz -C \"$HOME/.local/bin\"\nchmod +x \"$HOME/.local/bin/ipsw\"\nexport PATH=\"$HOME/.local/bin:$PATH\"\necho \"IPSW_BIN=$HOME/.local/bin\" >> $GITHUB_ENV\nipsw version\nfor t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool mformat mcopy ipsw cargo rustc; do\n  command -v \"$t\" >/dev/null || { echo \"missing tool: $t\"; exit 1; }\ndone\npython3 -c 'import tomllib,sys; print(sys.version)'\nfor t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do\n  [ -x \"$(brew --prefix llvm)/bin/$t\" ] || [ -x \"$(brew --prefix lld)/bin/$t\" ] || { echo \"missing tool: $t\"; exit 1; }\ndone\nsw_vers; xcodebuild -version; uname -m\n"
+
     - name: Checkout official sources at pinned revisions
+
       run: 'set -euo pipefail
+
+
 
         ROOT="$GITHUB_WORKSPACE/pkg27"
 
+
+
         rm -rf "$ROOT"
 
+
+
         mkdir -p "$ROOT"
+
+
 
         cd "$ROOT"
 
 
+
+
+
         git init UniXNU
+
+
 
         git -C UniXNU remote add origin "$REPO_UNIXNU"
 
+
+
         git -C UniXNU fetch --depth 1 origin "$UNIXNU_REF"
 
+
+
         git -C UniXNU checkout --detach FETCH_HEAD
+
+
 
         git -C UniXNU submodule update --init --recursive --depth 1 --jobs 8
 
 
+
+
+
         git init device
+
+
 
         git -C device remote add origin "$REPO_DEVICE"
 
+
+
         git -C device fetch --depth 1 origin "$DEVICE_REF"
 
+
+
         git -C device checkout --detach FETCH_HEAD
+
+
 
         git -C device submodule update --init --recursive --depth 1 --jobs 8
 
 
+
+
+
         git clone --depth 1 --single-branch --branch sheng "$REPO_UEFI" uefi-sheng
+
+
 
         git -C uefi-sheng submodule update --init --recursive --depth 1 --jobs 8
 
 
+
+
+
         echo "UniXNU  $(git -C UniXNU rev-parse HEAD)"
+
+
 
         echo "device  $(git -C device rev-parse HEAD)"
 
+
+
         echo "uefi    $(git -C uefi-sheng rev-parse HEAD)"
+
+
 
         test -d uefi-sheng/Platforms/Xiaomi/shengPkg
 
+
+
         test -f device/scripts/package.sh
 
+
+
         '
+
     - name: Normalize upstream patch headers
+
       run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\npython3 - \"$ROOT\" <<'PY'\nimport pathlib\nimport sys\n\nroot = pathlib.Path(sys.argv[1])\nfixed = 0\nfor p in sorted(root.rglob('*.patch')):\n    raw = p.read_bytes().decode('utf-8', 'surrogateescape')\n    lines = raw.splitlines(keepends=True)\n    out = []\n    changed = False\n    for i, line in enumerate(lines):\n        out.append(line)\n        if not line.startswith('diff --git '):\n            continue\n        has_new_mode = False\n        dash = None\n        for k in range(i + 1, min(i + 12, len(lines))):\n            s = lines[k]\n            if s.startswith('new file mode'):\n                has_new_mode = True\n                break\n            if s.startswith('--- '):\n                dash = s.strip()\n                break\n        if dash == '--- /dev/null' and not has_new_mode:\n            out.append('new file mode 100644\\n')\n            changed = True\n    if changed:\n        p.write_bytes(''.join(out).encode('utf-8', 'surrogateescape'))\n        print('normalized', p)\n        fixed += 1\nprint('patches normalized:', fixed)\nPY\n"
+
     - name: Prepare driver source checkouts in non-cone sparse mode
+
       run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\npython3 - \"$ROOT\" <<'PY'\nimport json\nimport pathlib\nimport subprocess\nimport sys\n\ndrivers = pathlib.Path(sys.argv[1]) / \"device\" / \"drivers\"\nlocks = sorted(drivers.glob(\"*/tools/source-lock.json\"))\nprint(\"source locks:\", [str(p) for p in locks])\nfor lock_path in locks:\n    lock = json.loads(lock_path.read_text())\n    base = lock_path.parents[1]\n    for name in (\"linux\", \"freebsd\"):\n        src = lock.get(name)\n        if not src:\n            continue\n        dest = base / \"deps\" / name\n        if not dest.exists():\n            dest.parent.mkdir(parents=True, exist_ok=True)\n            cmd = [\"git\", \"clone\", \"--depth\", \"1\", \"--filter=blob:none\", \"--sparse\"]\n            if src.get(\"ref\"):\n                cmd += [\"--branch\", src[\"ref\"]]\n            cmd += [src[\"url\"], str(dest)]\n            print(\"clone\", name, src.get(\"ref\"), src[\"url\"])\n            subprocess.run(cmd, check=True)\n        subprocess.run([\"git\", \"-C\", str(dest), \"config\", \"core.sparseCheckoutCone\", \"false\"], check=True)\n        subprocess.run([\"git\", \"-C\", str(dest), \"sparse-checkout\", \"set\", \"--no-cone\", *src[\"paths\"]], check=True)\n        head = subprocess.run([\"git\", \"-C\", str(dest), \"rev-parse\", \"HEAD\"],\n                              capture_output=True, text=True).stdout.strip()\n        missing = [p for p in src.get(\"required\", []) if not (dest / p).is_file()]\n        print(name, \"revision\", head, \"expect\", src.get(\"commit\"), \"missing\", len(missing))\n        if head != src.get(\"commit\"):\n            sys.exit(\"%s: revision %s != locked %s\" % (name, head, src.get(\"commit\")))\n        if missing:\n            print(\"missing sample:\", missing[:5])\n            sys.exit(\"%s: %d required files missing\" % (name, len(missing)))\nprint(\"driver sources ready\")\nPY\n"
+
     - name: Patch 27 board link to compile the WiFi firmware loader
+
       run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\npython3 - \"$ROOT\" <<'PY'\nimport pathlib\nimport sys\n\np = pathlib.Path(sys.argv[1]) / \"device\" / \"scripts\" / \"build-gop-legacy-display-27.py\"\ntext = p.read_text()\nanchor = \"board_objects += [Path(line.split(' ', 1)[1]) for line in run(['python3', ROOT / 'scripts/build-ath12k-wifi.py'\"\nif \"package/WifiFirmware.c\" in text:\n    print(\"already compiles WifiFirmware.c\")\nelse:\n    if text.count(anchor) != 1:\n        sys.exit(\"anchor not found exactly once: %d\" % text.count(anchor))\n    inject = (\n        \"# Board: the WiFi firmware loader the probe calls (package/WifiFirmware.c in the device repo).\\n\"\n        \"if not (KITS / 'WifiFirmware.c').exists():\\n\"\n        \"    (KITS / 'WifiFirmware.c').write_bytes((DEVICE / 'package/WifiFirmware.c').read_bytes())\\n\"\n        \"compile_c(KITS / 'WifiFirmware.c', board_dir / 'WifiFirmware.o', 'bsd/DEVELOPMENT/kern_exec.o.json')\\n\"\n        \"board_objects.append(board_dir / 'WifiFirmware.o')\\n\"\n    )\n    p.write_text(text.replace(anchor, inject + anchor))\n    print(\"patched\", p)\nPY\n"
+
     - name: Select header_version 3 and fix the bootimg verify offset
+
       run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\npython3 -c \"import base64,pathlib;pathlib.Path('/tmp/fix_verify.py').write_bytes(base64.b64decode('IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJGaXggdGhlIHVwc3RyZWFtIGJvb3RpbWcucHkgdmVyaWZ5KCkga2VybmVsIHNsaWNlIGZvciB2MC92MS92MiBpbWFnZXMuCgp2ZXJpZnkoKSBzbGljZXMgdGhlIGtlcm5lbCBmcm9tIGBzdGFydCA9IDBgLCBidXQgaW4gYSB2MCBpbWFnZSBwYWdlIDAgaG9sZHMgdGhlCmJvb3QgaW1hZ2UgaGVhZGVyIGFuZCB0aGUga2VybmVsIHN0YXJ0cyBhdCBwYWdlIDEuIFRoZSBnemlwIHJvdW5kLXRyaXAgY2hlY2sKdGhlcmVmb3JlIGFsd2F5cyBmYWlscyB3aXRoIHpsaWIgImluY29ycmVjdCBoZWFkZXIgY2hlY2siIGV2ZW4gd2hlbiB0aGUgcGFja2VkCmltYWdlIGlzIGNvcnJlY3QuIFRoaXMgb25seSBmaXhlcyB0aGUgc2VsZi1jaGVjazsgdGhlIGltYWdlIGJ5dGVzIGFyZSB1bnRvdWNoZWQuCiIiIgppbXBvcnQgc3lzCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKT0xEID0gIiAgICAgICAgc3RhcnQgPSAwXG4gICAgICAgIHJhbWRpc2tfc3RhcnQgPSBwYWdlICogKDEgKyAtKC1rZXJuZWxfc2l6ZSAvLyBwYWdlKSlcbiIKTkVXID0gIiAgICAgICAgc3RhcnQgPSBwYWdlXG4gICAgICAgIHJhbWRpc2tfc3RhcnQgPSBwYWdlICogKDEgKyAtKC1rZXJuZWxfc2l6ZSAvLyBwYWdlKSlcbiIKCgpkZWYgbWFpbigpOgogICAgcGF0aCA9IFBhdGgoc3lzLmFyZ3ZbMV0pCiAgICB0ZXh0ID0gcGF0aC5yZWFkX3RleHQoKQogICAgaWYgTkVXIGluIHRleHQ6CiAgICAgICAgcHJpbnQoInZlcmlmeSBhbHJlYWR5IHBhdGNoZWQ6IiwgcGF0aCkKICAgICAgICByZXR1cm4KICAgIGlmIHRleHQuY291bnQoT0xEKSAhPSAxOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoInZlcmlmeSBhbmNob3IgY291bnQgJWQgIT0gMSIgJSB0ZXh0LmNvdW50KE9MRCkpCiAgICBwYXRoLndyaXRlX3RleHQodGV4dC5yZXBsYWNlKE9MRCwgTkVXLCAxKSkKICAgIHByaW50KCJwYXRjaGVkIHZlcmlmeSgpOiB0aGUgdjAga2VybmVsIHN0YXJ0cyBhdCBwYWdlIDEsIG5vdCAwOiIsIHBhdGgpCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo='))\"\npython3 - \"$ROOT\" <<'PY'\nimport pathlib\nimport sys\n\np = pathlib.Path(sys.argv[1]) / \"device\" / \"board.toml\"\ntext = p.read_text()\nif '[\"bootimg\".\"image\"]' in text:\n    print(\"board.toml already overrides bootimg.image\")\nelse:\n    text = text.rstrip(\"\\n\") + '\\n\\n[\"bootimg\".\"image\"]\\n\"header_version\" = 3\\n'\n    p.write_text(text)\n    print(\"added [bootimg.image] header_version = 3\")\nPY\ngrep -n -A3 'bootimg\".\"image' \"$ROOT/device/board.toml\"\npython3 /tmp/fix_verify.py \"$ROOT/UniXNU/scripts/unixnu/bootimg.py\"\n"
+
     - name: Install the read-only process and UI probe
+
       run: 'set -euo pipefail
 
+
+
         ROOT="$GITHUB_WORKSPACE/pkg27"
+
+
 
         SRC="$GITHUB_WORKSPACE/ci/NativeUfs.probe15.cpp"
 
+
+
         DST="$ROOT/device/drivers/ShengUfs/NativeUfs.cpp"
+
+
 
         test -f "$SRC"
 
+
+
         test -f "$DST"
+
+
 
         cp "$DST" "$GITHUB_WORKSPACE/NativeUfs.before-probe15.cpp"
 
+
+
         cp "$SRC" "$DST"
+
+
 
         grep -n "processReportThread" "$DST"
 
+
+
         grep -n "if (probe == 15)" "$DST"
+
+
 
         shasum -a 256 "$GITHUB_WORKSPACE/NativeUfs.before-probe15.cpp" "$DST"
 
+
+
         '
+
     - name: Enable the original default framebuffer creation gate
+
       run: 'set -euo pipefail
 
+
+
         ROOT="$GITHUB_WORKSPACE/pkg27"
+
+
 
         python3 "$GITHUB_WORKSPACE/ci/enable_default_framebuffer.py" "$ROOT/device/scripts/legacy-display-24A446.json"
 
+
+
         grep -n ''"default_surface"'' "$ROOT/device/scripts/legacy-display-24A446.json"
 
+
+
         '
+
     - name: Pin AdrenoMetal to the main revision
+
       run: 'set -euo pipefail
 
+
+
         ROOT="$GITHUB_WORKSPACE/pkg27"
+
+
 
         python3 "$GITHUB_WORKSPACE/ci/pin_adreno_main.py" "$ROOT/UniXNU/components.toml"
 
+
+
         grep -n ''AdrenoMetal'' -A6 "$ROOT/UniXNU/components.toml"
 
+
+
         '
+
     - name: Patch Adreno submit early-return diagnostics
+
       run: 'set -euo pipefail
 
+
+
         ROOT="$GITHUB_WORKSPACE/pkg27"
+
+
 
         SRC="$ROOT/UniXNU/drivers/Adreno740/NativeAdrenoSubmit.cpp"
 
+
+
         python3 "$GITHUB_WORKSPACE/ci/patch_submit_fail_ci.py" "$SRC"
+
+
 
         grep -n ''SUBMIT_FAIL'' "$SRC" | head -5
 
+
+
         '
+
     - name: Add UniXNU probe logging
+
       run: 'set -euo pipefail
 
+
+
         ROOT="$GITHUB_WORKSPACE/pkg27"
+
+
 
         python3 -c "import base64,pathlib;pathlib.Path(''/tmp/apply_probe.py'').write_bytes(base64.b64decode(''IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMw0KIiIiQWRkIHJlYWQtb25seSBwcm9iZXMgdG8gVW5pWE5VIENvbmZpZy5jIGFuZCBzdXJmYWNlIHRoZSByZXN1bHRzIGluIHRoZSBtZW51IHRpdGxlLg0KDQpDb2xsZWN0cywgYXQgY29uZmlnIGxvYWQgdGltZSAocmlnaHQgYWZ0ZXIgVW5pWE5VQ29ubmVjdEFsbCgpKToNCiAgYiAgPSBCbG9ja0lvIGhhbmRsZSBjb3VudA0KICBkICA9IERpc2tJbyBoYW5kbGUgY291bnQNCiAgZiAgPSBTaW1wbGVGaWxlU3lzdGVtIGhhbmRsZSBjb3VudA0KICByICA9IHN0YXR1cyBvZiB0aGUgZmlyc3QgcGVyLXZvbHVtZSB1bml4bnUudG9tbCByZWFkIGF0dGVtcHQNCiAgYnMgPSBCbG9ja1NpemUgb2YgdGhlIGZpcnN0IEJsb2NrSW8gZGV2aWNlDQogIGxiID0gTGFzdEJsb2NrIG9mIHRoZSBmaXJzdCBCbG9ja0lvIGRldmljZQ0KICBsMCA9IGZpcnN0IGZvdXIgYnl0ZXMgb2YgdGhhdCBkZXZpY2UncyBMQkEgMA0KICBzZyA9IGJ5dGVzIDUxMC4uNTExIG9mIHRoYXQgZGV2aWNlJ3MgTEJBIDAgKDB4YWE1NSBtZWFucyBhIGJvb3Qgc2lnbmF0dXJlKQ0KDQpUaGUgdmFsdWVzIGFyZSBwcmludGVkIGludG8gdGhlIG1lbnUgdGl0bGUsIGJlY2F1c2UgVW5pWE5VTG9nIGlzIGZpbHRlcmVkIG91dA0KYnkgdGhlIHBsYXRmb3JtJ3MgZGVidWcgbWFzayBhbmQgbmV2ZXIgcmVhY2hlcyB0aGUgc2NyZWVuLg0KDQpObyBiZWhhdmlvdXIgY2hhbmdlczogY291bnRlcnMsIG9uZSByZWFkIG9mIExCQSAwLCBhbmQgYSB0aXRsZSBzdHJpbmcuDQoiIiINCmltcG9ydCBzeXMNCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aA0KDQpJTkNfQU5DSE9SID0gJyNpbmNsdWRlICJJbnRlcm5hbC5oIlxuJw0KSU5DTFVERVMgPSAiIi5qb2luKFsNCiAgICAiXG4iLA0KICAgICIjaW5jbHVkZSA8UHJvdG9jb2wvQmxvY2tJby5oPlxuIiwNCiAgICAiI2luY2x1ZGUgPFByb3RvY29sL0Rpc2tJby5oPlxuIiwNCiAgICAiXG4iLA0KICAgICJTVEFUSUMgVUlOVE4gICAgbVByb2JlQmxvY2s7XG4iLA0KICAgICJTVEFUSUMgVUlOVE4gICAgbVByb2JlRGlzaztcbiIsDQogICAgIlNUQVRJQyBVSU5UTiAgICBtUHJvYmVGcztcbiIsDQogICAgIlNUQVRJQyBVSU5UTiAgICBtUHJvYmVSZWFkU3RhdHVzO1xuIiwNCiAgICAiU1RBVElDIEJPT0xFQU4gIG1Qcm9iZVJlYWRTZWVuO1xuIiwNCiAgICAiU1RBVElDIFVJTlROICAgIG1Qcm9iZUJsb2NrU2l6ZTtcbiIsDQogICAgIlNUQVRJQyBVSU5UTiAgICBtUHJvYmVMYXN0QmxvY2s7XG4iLA0KICAgICJTVEFUSUMgVUlOVDMyICAgbVByb2JlTDA7XG4iLA0KICAgICJTVEFUSUMgVUlOVDMyICAgbVByb2JlU2lnO1xuIiwNCl0pDQoNClpFUk9fQU5DSE9SID0gIiAgWmVyb01lbSAoQ29uZmlnLCBzaXplb2YgKCpDb25maWcpKTtcbiAgTG9hZGVkID0gRkFMU0U7XG4iDQoNClBST0JFID0gIiIuam9pbihbDQogICAgIiAgWmVyb01lbSAoQ29uZmlnLCBzaXplb2YgKCpDb25maWcpKTtcbiIsDQogICAgIiAgTG9hZGVkID0gRkFMU0U7XG4iLA0KICAgICJcbiIsDQogICAgIiAge1xuIiwNCiAgICAiICAgIEVGSV9IQU5ETEUgICpCaW9IYW5kbGVzO1xuIiwNCiAgICAiICAgIFVJTlROICAgICAgIEJpb0NvdW50O1xuIiwNCiAgICAiICAgIEVGSV9IQU5ETEUgICpQcm9iZTtcbiIsDQogICAgIiAgICBVSU5UTiAgICAgICBEaXNrQ291bnQ7XG4iLA0KICAgICIgICAgVUlOVE4gICAgICAgRnNDb3VudDtcbiIsDQogICAgIlxuIiwNCiAgICAiICAgIEJpb0hhbmRsZXMgPSBOVUxMO1xuIiwNCiAgICAiICAgIEJpb0NvdW50ICAgPSAwO1xuIiwNCiAgICAiICAgIGlmIChFRklfRVJST1IgKGdCUy0+TG9jYXRlSGFuZGxlQnVmZmVyIChCeVByb3RvY29sLCAmZ0VmaUJsb2NrSW9Qcm90b2NvbEd1aWQsIE5VTEwsICZCaW9Db3VudCwgJkJpb0hhbmRsZXMpKSkge1xuIiwNCiAgICAiICAgICAgQmlvQ291bnQgPSAwO1xuIiwNCiAgICAiICAgIH1cbiIsDQogICAgIlxuIiwNCiAgICAiICAgIFByb2JlID0gTlVMTDtcbiIsDQogICAgIiAgICBpZiAoRUZJX0VSUk9SIChnQlMtPkxvY2F0ZUhhbmRsZUJ1ZmZlciAoQnlQcm90b2NvbCwgJmdFZmlEaXNrSW9Qcm90b2NvbEd1aWQsIE5VTEwsICZEaXNrQ291bnQsICZQcm9iZSkpKSB7XG4iLA0KICAgICIgICAgICBEaXNrQ291bnQgPSAwO1xuIiwNCiAgICAiICAgIH0gZWxzZSB7XG4iLA0KICAgICIgICAgICBGcmVlUG9vbCAoUHJvYmUpO1xuIiwNCiAgICAiICAgIH1cbiIsDQogICAgIlxuIiwNCiAgICAiICAgIFByb2JlID0gTlVMTDtcbiIsDQogICAgIiAgICBpZiAoRUZJX0VSUk9SIChnQlMtPkxvY2F0ZUhhbmRsZUJ1ZmZlciAoQnlQcm90b2NvbCwgJmdFZmlTaW1wbGVGaWxlU3lzdGVtUHJvdG9jb2xHdWlkLCBOVUxMLCAmRnNDb3VudCwgJlByb2JlKSkpIHtcbiIsDQogICAgIiAgICAgIEZzQ291bnQgPSAwO1xuIiwNCiAgICAiICAgIH0gZWxzZSB7XG4iLA0KICAgICIgICAgICBGcmVlUG9vbCAoUHJvYmUpO1xuIiwNCiAgICAiICAgIH1cbiIsDQogICAgIlxuIiwNCiAgICAiICAgIG1Qcm9iZUJsb2NrID0gQmlvQ291bnQ7XG4iLA0KICAgICIgICAgbVByb2JlRGlzayAgPSBEaXNrQ291bnQ7XG4iLA0KICAgICIgICAgbVByb2JlRnMgICAgPSBGc0NvdW50O1xuIiwNCiAgICAiXG4iLA0KICAgICIgICAgaWYgKEJpb0NvdW50ID4gMCkge1xuIiwNCiAgICAiICAgICAgRUZJX0JMT0NLX0lPX1BST1RPQ09MICAqQmlvO1xuIiwNCiAgICAiICAgICAgVUlOVDggICAgICAgICAgICAgICAgICAqU2VjdG9yO1xuIiwNCiAgICAiXG4iLA0KICAgICIgICAgICBCaW8gICAgPSBOVUxMO1xuIiwNCiAgICAiICAgICAgU2VjdG9yID0gQWxsb2NhdGVaZXJvUG9vbCAoNTEyKTtcbiIsDQogICAgIiAgICAgIGlmICgoU2VjdG9yICE9IE5VTEwpICYmXG4iLA0KICAgICIgICAgICAgICAgIUVGSV9FUlJPUiAoZ0JTLT5IYW5kbGVQcm90b2NvbCAoQmlvSGFuZGxlc1swXSwgJmdFZmlCbG9ja0lvUHJvdG9jb2xHdWlkLCAoVk9JRCAqKikmQmlvKSkgJiZcbiIsDQogICAgIiAgICAgICAgICAoQmlvICE9IE5VTEwpKVxuIiwNCiAgICAiICAgICAge1xuIiwNCiAgICAiICAgICAgICBtUHJvYmVCbG9ja1NpemUgPSAoVUlOVE4pQmlvLT5NZWRpYS0+QmxvY2tTaXplO1xuIiwNCiAgICAiICAgICAgICBtUHJvYmVMYXN0QmxvY2sgPSAoVUlOVE4pQmlvLT5NZWRpYS0+TGFzdEJsb2NrO1xuIiwNCiAgICAiICAgICAgICBpZiAoIUVGSV9FUlJPUiAoQmlvLT5SZWFkQmxvY2tzIChCaW8sIEJpby0+TWVkaWEtPk1lZGlhSWQsIDAsIDUxMiwgU2VjdG9yKSkpIHtcbiIsDQogICAgIiAgICAgICAgICBtUHJvYmVMMCAgPSAoKFVJTlQzMilTZWN0b3JbMF0gPDwgMjQpIHwgKChVSU5UMzIpU2VjdG9yWzFdIDw8IDE2KSB8ICgoVUlOVDMyKVNlY3RvclsyXSA8PCA4KSB8IChVSU5UMzIpU2VjdG9yWzNdO1xuIiwNCiAgICAiICAgICAgICAgIG1Qcm9iZVNpZyA9ICgoVUlOVDMyKVNlY3Rvcls1MTBdIDw8IDgpIHwgKFVJTlQzMilTZWN0b3JbNTExXTtcbiIsDQogICAgIiAgICAgICAgfVxuIiwNCiAgICAiICAgICAgfVxuIiwNCiAgICAiXG4iLA0KICAgICIgICAgICBpZiAoU2VjdG9yICE9IE5VTEwpIHtcbiIsDQogICAgIiAgICAgICAgRnJlZVBvb2wgKFNlY3Rvcik7XG4iLA0KICAgICIgICAgICB9XG4iLA0KICAgICIgICAgfVxuIiwNCiAgICAiXG4iLA0KICAgICIgICAgaWYgKEJpb0hhbmRsZXMgIT0gTlVMTCkge1xuIiwNCiAgICAiICAgICAgRnJlZVBvb2wgKEJpb0hhbmRsZXMpO1xuIiwNCiAgICAiICAgIH1cbiIsDQogICAgIlxuIiwNCiAgICAnICAgIFVuaVhOVUxvZyAoInByb2JlOiBibG9ja2lvICV1IGRpc2tpbyAldSBzaW1wbGVmcyAldSIsIChVSU5UMzIpQmlvQ291bnQsIChVSU5UMzIpRGlza0NvdW50LCAoVUlOVDMyKUZzQ291bnQpO1xuJywNCiAgICAiICB9XG4iLA0KXSkNCg0KUkVBRF9BTkNIT1IgPSAiIi5qb2luKFsNCiAgICAiICBTdGF0dXMgPSBVbmlYTlVSZWFkRmlsZSAoVm9sdW1lLCAoQ09OU1QgQ0hBUjE2ICopUGNkR2V0UHRyIChQY2RVbmlYTlVDb25maWdQYXRoKSwgKFZPSUQgKiopJlRleHQsICZTaXplKTtcbiIsDQogICAgIiAgaWYgKEVGSV9FUlJPUiAoU3RhdHVzKSkge1xuIiwNCiAgICAiICAgIHJldHVybiBGQUxTRTtcbiIsDQogICAgIiAgfVxuIiwNCl0pDQoNClJFQURfUEFUQ0ggPSAiIi5qb2luKFsNCiAgICAiICBTdGF0dXMgPSBVbmlYTlVSZWFkRmlsZSAoVm9sdW1lLCAoQ09OU1QgQ0hBUjE2ICopUGNkR2V0UHRyIChQY2RVbmlYTlVDb25maWdQYXRoKSwgKFZPSUQgKiopJlRleHQsICZTaXplKTtcbiIsDQogICAgIiAgaWYgKEVGSV9FUlJPUiAoU3RhdHVzKSkge1xuIiwNCiAgICAiICAgIGlmICghbVByb2JlUmVhZFNlZW4pIHtcbiIsDQogICAgIiAgICAgIG1Qcm9iZVJlYWRTZWVuICAgPSBUUlVFO1xuIiwNCiAgICAiICAgICAgbVByb2JlUmVhZFN0YXR1cyA9IChVSU5UTilTdGF0dXM7XG4iLA0KICAgICIgICAgfVxuIiwNCiAgICAiXG4iLA0KICAgICcgICAgVW5pWE5VTG9nICgicHJvYmU6IHZvbHVtZSAweCVseCByZWFkICVyIiwgKFVJTlQ2NCkoVUlOVE4pVm9sdW1lLCBTdGF0dXMpO1xuJywNCiAgICAiICAgIHJldHVybiBGQUxTRTtcbiIsDQogICAgIiAgfVxuIiwNCl0pDQoNClRJVExFX0FOQ0hPUiA9ICIgIENvbmZpZy0+U291cmNlTGFiZWwgPSBBbGxvY2F0ZUNvcHlQb29sIChTdHJTaXplIChMYWJlbCksIExhYmVsKTtcbiINCg0KVElUTEVfUEFUQ0ggPSAiIi5qb2luKFsNCiAgICAiICBDb25maWctPlNvdXJjZUxhYmVsID0gQWxsb2NhdGVDb3B5UG9vbCAoU3RyU2l6ZSAoTGFiZWwpLCBMYWJlbCk7XG4iLA0KICAgICJcbiIsDQogICAgIiAge1xuIiwNCiAgICAiICAgIENIQVIxNiAgKlByb2JlVGl0bGU7XG4iLA0KICAgICIgICAgVUlOVE4gICBQcm9iZUNoYXJzO1xuIiwNCiAgICAiXG4iLA0KICAgICIgICAgUHJvYmVDaGFycyA9IDE5MjtcbiIsDQogICAgIiAgICBQcm9iZVRpdGxlID0gQWxsb2NhdGVaZXJvUG9vbCAoUHJvYmVDaGFycyAqIHNpemVvZiAoQ0hBUjE2KSk7XG4iLA0KICAgICIgICAgaWYgKFByb2JlVGl0bGUgIT0gTlVMTCkge1xuIiwNCiAgICAiICAgICAgVW5pY29kZVNQcmludCAoXG4iLA0KICAgICIgICAgICAgIFByb2JlVGl0bGUsXG4iLA0KICAgICIgICAgICAgIFByb2JlQ2hhcnMgKiBzaXplb2YgKENIQVIxNiksXG4iLA0KICAgICcgICAgICAgIEwiJXMgW2IldSBkJXUgZiV1IHIleCBicyV1IGxiJXUgbDAlMDh4IHNnJTA0eF0iLFxuJywNCiAgICAnICAgICAgICAoQ29uZmlnLT5UaXRsZSAhPSBOVUxMKSA/IENvbmZpZy0+VGl0bGUgOiBMIlVuaVhOVSIsXG4nLA0KICAgICIgICAgICAgIChVSU5UMzIpbVByb2JlQmxvY2ssXG4iLA0KICAgICIgICAgICAgIChVSU5UMzIpbVByb2JlRGlzayxcbiIsDQogICAgIiAgICAgICAgKFVJTlQzMiltUHJvYmVGcyxcbiIsDQogICAgIiAgICAgICAgKFVJTlQ2NCltUHJvYmVSZWFkU3RhdHVzLFxuIiwNCiAgICAiICAgICAgICAoVUlOVDMyKW1Qcm9iZUJsb2NrU2l6ZSxcbiIsDQogICAgIiAgICAgICAgKFVJTlQzMiltUHJvYmVMYXN0QmxvY2ssXG4iLA0KICAgICIgICAgICAgIChVSU5UMzIpbVByb2JlTDAsXG4iLA0KICAgICIgICAgICAgIChVSU5UMzIpbVByb2JlU2lnXG4iLA0KICAgICIgICAgICAgICk7XG4iLA0KICAgICIgICAgICBDb25maWctPlRpdGxlID0gUHJvYmVUaXRsZTtcbiIsDQogICAgIiAgICB9XG4iLA0KICAgICIgIH1cbiIsDQpdKQ0KDQpJTkZfQU5DSE9SID0gIiAgZ0VmaVBhcnRpdGlvbkluZm9Qcm90b2NvbEd1aWQgICAgICMjIFNPTUVUSU1FU19DT05TVU1FU1xuIg0KSU5GX0xJTkUgPSAiICBnRWZpRGlza0lvUHJvdG9jb2xHdWlkICAgICAgICAgICAgIyMgU09NRVRJTUVTX0NPTlNVTUVTXG4iDQoNCg0KZGVmIHBhdGNoX2luZihjZmcpOg0KICAgIGluZiA9IGNmZy53aXRoX25hbWUoIlVuaVhOVUxpYi5pbmYiKQ0KICAgIGlmIG5vdCBpbmYuaXNfZmlsZSgpOg0KICAgICAgICByZXR1cm4NCiAgICB0ZXh0ID0gaW5mLnJlYWRfdGV4dCgpDQogICAgaWYgImdFZmlEaXNrSW9Qcm90b2NvbEd1aWQiIGluIHRleHQ6DQogICAgICAgIHJldHVybg0KICAgIGlmIHRleHQuY291bnQoSU5GX0FOQ0hPUikgIT0gMToNCiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCgiaW5mIGFuY2hvciBjb3VudCAlZCAhPSAxIiAlIHRleHQuY291bnQoSU5GX0FOQ0hPUikpDQogICAgaW5mLndyaXRlX3RleHQodGV4dC5yZXBsYWNlKElORl9BTkNIT1IsIElORl9MSU5FICsgSU5GX0FOQ0hPUiwgMSkpDQogICAgcHJpbnQoInBhdGNoZWQgaW5mOiIsIGluZikNCg0KDQpkZWYgbWFpbigpOg0KICAgIHBhdGggPSBQYXRoKHN5cy5hcmd2WzFdKQ0KICAgIHRleHQgPSBwYXRoLnJlYWRfdGV4dCgpDQogICAgaWYgInByb2JlOiBibG9ja2lvIiBpbiB0ZXh0Og0KICAgICAgICBwcmludCgiYWxyZWFkeSBwYXRjaGVkOiIsIHBhdGgpDQogICAgICAgIHJldHVybg0KICAgIGZvciBhbmNob3IsIG5hbWUgaW4gKChJTkNfQU5DSE9SLCAiaW5jbHVkZSIpLA0KICAgICAgICAgICAgICAgICAgICAgICAgIChaRVJPX0FOQ0hPUiwgIlplcm9NZW0iKSwNCiAgICAgICAgICAgICAgICAgICAgICAgICAoUkVBRF9BTkNIT1IsICJyZWFkIiksDQogICAgICAgICAgICAgICAgICAgICAgICAgKFRJVExFX0FOQ0hPUiwgInRpdGxlIikpOg0KICAgICAgICBpZiB0ZXh0LmNvdW50KGFuY2hvcikgIT0gMToNCiAgICAgICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoIiVzIGFuY2hvciBjb3VudCAlZCAhPSAxIiAlIChuYW1lLCB0ZXh0LmNvdW50KGFuY2hvcikpKQ0KICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoSU5DX0FOQ0hPUiwgSU5DX0FOQ0hPUiArIElOQ0xVREVTLCAxKQ0KICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoWkVST19BTkNIT1IsIFBST0JFLCAxKQ0KICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoUkVBRF9BTkNIT1IsIFJFQURfUEFUQ0gsIDEpDQogICAgdGV4dCA9IHRleHQucmVwbGFjZShUSVRMRV9BTkNIT1IsIFRJVExFX1BBVENILCAxKQ0KICAgIHBhdGgud3JpdGVfdGV4dCh0ZXh0KQ0KICAgIHByaW50KCJwYXRjaGVkOiIsIHBhdGgpDQogICAgcGF0Y2hfaW5mKHBhdGgpDQoNCg0KaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoNCiAgICBtYWluKCkNCg==''))"
 
+
+
         python3 /tmp/apply_probe.py "$ROOT/UniXNU/package/UniXNUPkg/Library/UniXNULib/Config.c"
+
+
 
         grep -n "probe: blockio\|probe: volume" "$ROOT/UniXNU/package/UniXNUPkg/Library/UniXNULib/Config.c"
 
+
+
         '
+
     - name: Patch the RAM disk driver to skip the bootloader vendor ramdisk
+
       run: 'set -euo pipefail
+
+
 
         ROOT="$GITHUB_WORKSPACE/pkg27"
 
+
+
         python3 -c "import base64,pathlib;pathlib.Path(''/tmp/apply_ramdisk.py'').write_bytes(base64.b64decode(''IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJUZWFjaCBVbmlYTlVSYW1EaXNrRHhlIHRvIGZpbmQgdGhlIHBheWxvYWQgRkFUIGluc2lkZSBhIGNvbmNhdGVuYXRlZCBpbml0cmQuCgpPbiBzaGVuZyB0aGUgYm9vdGxvYWRlciBoYW5kcyBvdmVyIG9uZSBpbml0cmQgdGhhdCBzdGFydHMgd2l0aCB0aGUgc3RvY2sKdmVuZG9yIHJhbWRpc2sgKGFuIExaNCBzdHJlYW0pIGFuZCBjb250aW51ZXMgd2l0aCB0aGUgVW5pWE5VIHBheWxvYWQsIHNvIHRoZQpwdWJsaXNoZWQgYmxvY2sgZGV2aWNlIGJlZ2lucyB3aXRoIGNvbXByZXNzZWQgZGF0YSBhbmQgdGhlIEZBVCBkcml2ZXIgcmVmdXNlcwppdC4gVGhpcyBzY2FucyB0aGUgaW5pdHJkIGZvciBhIEZBVDMyIGJvb3Qgc2VjdG9yIGFuZCBwdWJsaXNoZXMgZnJvbSB0aGVyZS4KTm8gYmVoYXZpb3VyIGNoYW5nZSB3aGVuIHRoZSBpbml0cmQgYWxyZWFkeSBzdGFydHMgd2l0aCB0aGUgcGF5bG9hZC4KIiIiCmltcG9ydCBzeXMKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpIRUxQRVIgPSAnJydTVEFUSUMKVUlOVDY0CkZpbmRGYXRCb290U2VjdG9yICgKICBJTiBDT05TVCBVSU5UOCAgKkJhc2UsCiAgSU4gVUlOVDY0ICAgICAgIFRvdGFsCiAgKQp7CiAgVUlOVDY0ICBPZmZzZXQ7CgogIGlmIChUb3RhbCA8IFJBTV9CTE9DS19TSVpFKSB7CiAgICByZXR1cm4gMDsKICB9CgogIGZvciAoT2Zmc2V0ID0gMDsgT2Zmc2V0ICsgUkFNX0JMT0NLX1NJWkUgPD0gVG90YWw7IE9mZnNldCsrKSB7CiAgICBDT05TVCBVSU5UOCAgKlNlY3RvcjsKCiAgICBTZWN0b3IgPSBCYXNlICsgT2Zmc2V0OwogICAgaWYgKChTZWN0b3JbMF0gIT0gMHhFQikgfHwgKFNlY3Rvcls1MTBdICE9IDB4NTUpIHx8IChTZWN0b3JbNTExXSAhPSAweEFBKSkgewogICAgICBjb250aW51ZTsKICAgIH0KCiAgICBpZiAoQ29tcGFyZU1lbSAoU2VjdG9yICsgODIsICJGQVQzMiAgICIsIDgpICE9IDApIHsKICAgICAgY29udGludWU7CiAgICB9CgogICAgaWYgKChTZWN0b3JbMTFdICE9IDB4MDApIHx8IChTZWN0b3JbMTJdICE9IDB4MDIpKSB7CiAgICAgIGNvbnRpbnVlOwogICAgfQoKICAgIHJldHVybiBPZmZzZXQ7CiAgfQoKICByZXR1cm4gMDsKfQoKJycnCgpIRUxQRVJfQU5DSE9SID0gIlNUQVRJQ1xuVk9JRFxuUHVibGlzaEluaXRyZCAoXG4iCgpTSElGVF9BTkNIT1IgPSAiICBtUmFtQmFzZSAgICAgICAgICAgICAgICA9IChVSU5UOCAqKShVSU5UTilTdGFydDtcbiIKU0hJRlRfUEFUQ0ggPSAiIiIgIHsKICAgIFVJTlQ2NCAgRmF0T2Zmc2V0OwoKICAgIEZhdE9mZnNldCA9IEZpbmRGYXRCb290U2VjdG9yICgoQ09OU1QgVUlOVDggKikoVUlOVE4pU3RhcnQsIEVuZCAtIFN0YXJ0KTsKICAgIGlmIChGYXRPZmZzZXQgIT0gMCkgewogICAgICBERUJVRyAoKERFQlVHX0VSUk9SLCAiVU5JWE5VUkFNRElTSzogcGF5bG9hZCBGQVQgYXQgKzB4JWx4XFxuIiwgRmF0T2Zmc2V0KSk7CiAgICAgIFN0YXJ0ICs9IEZhdE9mZnNldDsKICAgIH0KICB9CgogIG1SYW1CYXNlICAgICAgICAgICAgICAgID0gKFVJTlQ4ICopKFVJTlROKVN0YXJ0OwoiIiIKCgpkZWYgbWFpbigpOgogICAgcGF0aCA9IFBhdGgoc3lzLmFyZ3ZbMV0pCiAgICB0ZXh0ID0gcGF0aC5yZWFkX3RleHQoKQogICAgaWYgIkZpbmRGYXRCb290U2VjdG9yIiBpbiB0ZXh0OgogICAgICAgIHByaW50KCJhbHJlYWR5IHBhdGNoZWQ6IiwgcGF0aCkKICAgICAgICByZXR1cm4KICAgIGlmIHRleHQuY291bnQoSEVMUEVSX0FOQ0hPUikgIT0gMToKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJoZWxwZXIgYW5jaG9yIGNvdW50ICVkICE9IDEiICUgdGV4dC5jb3VudChIRUxQRVJfQU5DSE9SKSkKICAgIGlmIHRleHQuY291bnQoU0hJRlRfQU5DSE9SKSAhPSAxOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoInNoaWZ0IGFuY2hvciBjb3VudCAlZCAhPSAxIiAlIHRleHQuY291bnQoU0hJRlRfQU5DSE9SKSkKICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoSEVMUEVSX0FOQ0hPUiwgSEVMUEVSICsgSEVMUEVSX0FOQ0hPUiwgMSkKICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoU0hJRlRfQU5DSE9SLCBTSElGVF9QQVRDSCwgMSkKICAgIHBhdGgud3JpdGVfdGV4dCh0ZXh0KQogICAgcHJpbnQoInBhdGNoZWQgcmFtZGlzayBkcml2ZXI6IiwgcGF0aCkKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg==''))"
+
+
 
         python3 /tmp/apply_ramdisk.py "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
 
+
+
         grep -n "FindFatBootSector" "$ROOT/UniXNU/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c"
 
+
+
         '
+
     - name: Build package 27 with first-install Data seed
+
       run: "set -o pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\ndf -h / | tail -2\nexport PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$(brew --prefix bison)/bin:$PATH\"\necho \"cargo: $(command -v cargo) $(cargo --version 2>&1)\"\nexport UNIXNU_UNIQUE_CHIP_ID=\"9732b499\"\nexport GITHUB_TOKEN=\"${GH_TOKEN:-}\"\ncd \"$ROOT/device\"\nset +e\nset +e\nscripts/package.sh --os 27 --uefi \"$ROOT/uefi-sheng\" --init-data 2>&1 | tee \"$GITHUB_WORKSPACE/package27.log\"\nrc=${PIPESTATUS[0]}\nset -e\necho \"=== package rc=$rc ===\"\nif [ \"$rc\" -ne 0 ]; then\n  BASE=\"$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446\"\n  if [ ! -f \"$BASE/boot/boot.img\" ] || [ ! -f \"$BASE/package.manifest.json\" ]; then\n    SRC_LOG=\"$BASE/sheng_ipados27/tree/build/sheng-source-storage/NativeUfs.log\"\n    echo \"=== ShengUfs compile errors with context ===\"\n    grep -n -B 4 -A 8 \"error:\" \"$SRC_LOG\" || true\n    exit \"$rc\"\n  fi\n  echo \"boot.img and package.manifest.json exist; continue to artifact verification\"\nfi\n"
+
+    - name: Make no-setup Data seed (skip first-boot migration, plain framebuffer)
+      run: |
+        set -euo pipefail
+        ROOT="$GITHUB_WORKSPACE/pkg27"
+        SEED=$(find "$ROOT/UniXNU/out/sheng" -type f -name 'data.dbr' | head -1)
+        test -n "$SEED" && echo "base seed: $SEED"
+        # Reuse the upstream no-setup recipe on OUR first-install seed: remove
+        # com.apple.migration.plist (27's first-boot migration kept every core busy for
+        # 20+ minutes upstream, matching our GPU-idle/swap=0 black screen) and force
+        # CAEnableDeepFramebuffer/Compression off, as in the recorded working boot.
+        python3 "$ROOT/device/scripts/make-nosetup-seed27.py" "$SEED" "$GITHUB_WORKSPACE/nosetup/data-nosetup.dbr"
+        shasum -a 256 "$GITHUB_WORKSPACE/nosetup/data-nosetup.dbr"
     - name: Collect images and Data seed
-      run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\nOUT=\"$GITHUB_WORKSPACE/out27\"\nrm -rf \"$OUT\"; mkdir -p \"$OUT\"\ncp \"$GITHUB_WORKSPACE/package27.log\" \"$OUT/\" || true\n\nBASE=\"$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446\"\nfind \"$BASE\" -type f \\( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \\) -exec cp {} \"$OUT/\" \\; 2>/dev/null || true\nfind \"$ROOT/UniXNU/out/sheng\" -type f -name 'sheng.dtb' -exec cp {} \"$OUT/\" \\; 2>/dev/null || true\n\ncd \"$OUT\"\nls -lh\nshasum -a 256 boot.img payload.img kernel.macho data.dbr 2>/dev/null || true\nfor f in boot.img payload.img data.dbr package.manifest.json; do\n  [ -f \"$f\" ] || echo \"MISSING $f\"\ndone\n"
+
+      run: "set -euo pipefail\nROOT=\"$GITHUB_WORKSPACE/pkg27\"\nOUT=\"$GITHUB_WORKSPACE/out27\"\nrm -rf \"$OUT\"; mkdir -p \"$OUT\"\ncp \"$GITHUB_WORKSPACE/package27.log\" \"$OUT/\" || true\n\nBASE=\"$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446\"\nfind \"$BASE\" -type f \\( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \\) -exec cp {} \"$OUT/\" \\; 2>/dev/null || true\nfind \"$ROOT/UniXNU/out/sheng\" -type f -name 'sheng.dtb' -exec cp {} \"$OUT/\" \\; 2>/dev/null || true\n\ncp \"$GITHUB_WORKSPACE/nosetup/data-nosetup.dbr\" \"$OUT/\" || true\ncd \"$OUT\"\nls -lh\nshasum -a 256 boot.img payload.img kernel.macho data.dbr 2>/dev/null || true\nfor f in boot.img payload.img data.dbr package.manifest.json; do\n  [ -f \"$f\" ] || echo \"MISSING $f\"\ndone\n"
+
     - name: Upload artifacts
+
       uses: actions/upload-artifact@v4
+
       with:
+
         name: out27
+
         path: out27/*
+
         if-no-files-found: error
+
