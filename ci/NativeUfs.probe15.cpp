@@ -1609,6 +1609,14 @@ extern "C" {
 volatile uint32_t native_ufs_blocks_published = 0;
 volatile uint64_t native_ufs_block_reads = 0;
 volatile uint64_t native_ufs_block_failures = 0;
+// The boot progress page links against the VirtIO storage counters even when this
+// board boots from UFS. BootProgress.c only reads them while native_ufs_blocks_published
+// is zero (the "OFFLINE VIRTIO" branch); once UFS publishes a block the page uses the
+// native_ufs_* counters above. Define them here so libBootProgress.a links.
+volatile uint32_t native_virtio_ready = 0;
+volatile uint32_t native_virtio_read_requests = 0;
+volatile uint32_t native_virtio_read_failures = 0;
+volatile uint64_t native_virtio_verified_blocks = 0;
 }
 
 static char gRootDiagnosticText[2500];
