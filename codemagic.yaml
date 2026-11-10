@@ -391,6 +391,10 @@ workflows:
           echo "cargo: $(command -v cargo) $(cargo --version 2>&1)"
           export UNIXNU_UNIQUE_CHIP_ID="9732b499"
           export GITHUB_TOKEN="${GH_TOKEN:-}"
+          # The boot-progress builder locates Font.h in the UEFI tree via UNIXNU_UEFI;
+          # without it it defaults to <device>/uefi-sheng which does not exist in CI.
+          export UNIXNU_UEFI="$ROOT/uefi-sheng"
+          test -f "$UNIXNU_UEFI/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h" && echo "Font.h present"
           cd "$ROOT/device"
           set +e
           set +e
