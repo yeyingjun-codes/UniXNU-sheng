@@ -208,154 +208,6 @@ workflows:
           print('patches normalized:', fixed)
           PY
 
-      - name: Enable the on-screen boot progress diagnostic in the ipados27 config
-        script: |
-          set -euo pipefail
-          ROOT="$CM_BUILD_DIR/pkg27"
-          CFG="$ROOT/device/configs/sheng_ipados27_defconfig"
-          # Only the diagnostic page itself is a defconfig opt-in. The UFS and corecrypto
-          # archives are already produced via board.toml archives (component:ShengUfs and
-          # build-sheng-source-storage.py / build-corecrypto-14.py). Setting CONFIG_XNU_NATIVE_UFS
-          # or CONFIG_XNU_SOURCE_CORECRYPTO14 here would ALSO link libShengUfs.a / the source
-          # corecrypto archive a second time and cause "duplicate symbol" at link, so those two
-          # are supplied as plain environment variables in the build step below instead.
-          if grep -q '^CONFIG_XNU_BOOT_PROGRESS=' "$CFG"; then
-            echo "XNU_BOOT_PROGRESS already present"
-          else
-            printf '\n# On-screen boot progress diagnostic page (boot-progress=1/2)\nCONFIG_XNU_BOOT_PROGRESS=y\n' >> "$CFG"
-            echo "appended CONFIG_XNU_BOOT_PROGRESS=y"
-          fi
-          grep -nE 'BOOT_PROGRESS|OWNER_ROOT_AUDIT' "$CFG"
-          # The archive builder must actually run, otherwise libBootProgress.a is never made
-          # even after the gate passes. Insert it right before the final reference builder.
-          python3 - "$ROOT" <<'PY'
-          import pathlib, re, sys
-          p = pathlib.Path(sys.argv[1]) / 'device' / 'board.toml'
-          t = p.read_text()
-          if 'build-boot-progress.py' in t:
-              print('build-boot-progress.py already in archives')
-          else:
-              anchor = '"build-fileset-release-reference.py --tree . --lto"'
-              assert t.count(anchor) == 1, t.count(anchor)
-              t = t.replace(anchor, '"build-boot-progress.py", ' + anchor)
-              p.write_text(t)
-              print('inserted build-boot-progress.py before the reference builder')
-          PY
-          # Relax the boot-progress gate. This board produces the UFS and source-corecrypto
-          # archives through board.toml (libShengSourceStorage.a), NOT through the XNU_NATIVE_UFS /
-          # XNU_SOURCE_CORECRYPTO14 switches (which would -force_load a second copy and cause
-          # "duplicate symbol"). The upstream gate assumes those switches are the only way to get
-          # the archives, which is false here, so make it informational instead of fatal.
-          python3 - "$ROOT" <<'PY'
-          import pathlib, sys
-          p = pathlib.Path(sys.argv[1]) / 'UniXNU' / 'scripts' / 'build-xnu-4k-baseline.sh'
-          if not p.exists():
-              # the script lives in the build tree at build time; patch the source copy the tree is made from
-              print('baseline script not in the pinned UniXNU checkout yet; patching on demand at build time is handled by the device tree copy')
-          t = p.read_text() if p.exists() else ''
-          if 'Boot progress requires the audited UFS/owner-root and source-corecrypto build' in t:
-              old = "    echo 'Boot progress requires the audited UFS/owner-root and source-corecrypto build' >&2\n    exit 1"
-              new = "    echo 'Boot progress: UFS/corecrypto supplied via board archives; continuing' >&2"
-              if old in t:
-                  p.write_text(t.replace(old, new))
-                  print('relaxed the boot-progress gate (no exit 1)')
-              else:
-                  print('gate text present but the exact exit block differs; leaving as-is')
-          else:
-              print('gate text not found in the pinned script copy (may live in the build tree)')
-          PY
-          # libBootProgress.a must only carry the objects that are unique to the diagnostic page.
-          # BootWatchdogPolicy.o / AdspFirmware.o / BootDiagExport.o / BootLatencyTrace.o are already
-          # present in libShengSourceStorage.a / libNativeLegacyDisplay.late.a, so archiving them
-          # again here causes "duplicate symbol" at link. Keep only BootProgress.o + BootFaultProbe.o.
-          python3 - "$ROOT" <<'PY'
-          import pathlib, sys
-          p = pathlib.Path(sys.argv[1]) / 'device' / 'scripts' / 'build-boot-progress.py'
-          t = p.read_text()
-          old = "str(archive), str(obj), str(fault_obj), str(policy_obj), str(diag_obj), str(latency_obj), str(fw_obj)"
-          new = "str(archive), str(obj), str(fault_obj)"
-          if old in t:
-              p.write_text(t.replace(old, new))
-              print('trimmed libBootProgress.a to BootProgress.o + BootFaultProbe.o (drop duplicated helper objects)')
-          elif new in t:
-              print('archive already trimmed')
-          else:
-              print('archive command not matched; check the ar invocation manually')
-          PY
-          # LegacyDisplaySupport27.o defines weak placeholder implementations of the five
-          # boot_progress_* symbols (for builds without the diagnostic page). Now that the real
-          # BootProgress.o is linked, those strong duplicates collide. Mark the placeholders weak
-          # so the real BootProgress.o definitions win.
-          python3 - "$ROOT" <<'PY'
-          import pathlib, sys
-          p = pathlib.Path(sys.argv[1]) / 'device' / 'scripts' / 'build-gop-legacy-display-27.py'
-          t = p.read_text()
-          repls = [
-            ('extern "C" {char boot_progress_ext[8][48];}',
-             'extern "C" {__attribute__((weak)) char boot_progress_ext[8][48];}'),
-            ('extern "C" int boot_progress_prepare_scanout(void) {return 1;}',
-             'extern "C" __attribute__((weak)) int boot_progress_prepare_scanout(void) {return 1;}'),
-            ('extern "C" void boot_progress_cancel_scanout(void) {}',
-             'extern "C" __attribute__((weak)) void boot_progress_cancel_scanout(void) {}'),
-            ('extern "C" void boot_progress_stage(const char *) {}',
-             'extern "C" __attribute__((weak)) void boot_progress_stage(const char *) {}'),
-            ('extern "C" int boot_progress_pulse_anchor(uintptr_t,uint64_t,unsigned,unsigned,unsigned) {return 0;}',
-             'extern "C" __attribute__((weak)) int boot_progress_pulse_anchor(uintptr_t,uint64_t,unsigned,unsigned,unsigned) {return 0;}'),
-          ]
-          n = 0
-          for old, new in repls:
-              if old in t and '__attribute__((weak))' not in old:
-                  t = t.replace(old, new); n += 1
-          if n:
-              p.write_text(t)
-              print('marked %d boot_progress placeholders weak in LegacyDisplaySupport27' % n)
-          else:
-              print('placeholders already weak or not found')
-          PY
-          # Prelink layout: keep the original fixed __DATA placement. The __DATA root mapping is
-          # fragmented by retained kexts, so hole() fails with "No room for 3.6 MB". The original
-          # kernel address leaves the largest contiguous tail gap, which fits once the sampling
-          # ring is shrunk (native __DATA 3.6 MB vs the 4 MB budget).
-          python3 - "$ROOT" <<'PY'
-          import pathlib, sys
-          p = pathlib.Path(sys.argv[1]) / 'UniXNU' / 'kits' / 'XnuPrelink' / 'fileset_layout.py'
-          if not p.exists():
-              print('fileset_layout.py not at the pinned path; skipping')
-          else:
-              t = p.read_text()
-              # undo any previous hole() rewrite and restore the fixed placement
-              hole_line = "self.reserve('__DATA', self.hole('__DATA', self.segment('__DATA')['size']))"
-              fixed_line = "self.reserve('__DATA', self.roots['__DATA']['va'])"
-              if hole_line in t:
-                  p.write_text(t.replace(hole_line, fixed_line))
-                  print('prelink: restored the fixed __DATA placement (hole() rolled back)')
-              elif fixed_line in t:
-                  print('prelink: fixed __DATA placement already in place')
-              else:
-                  print('prelink: __DATA reserve line not found; check fileset_layout.py')
-          PY
-          # The prelink __DATA collection mapping is a fixed budget (0x400000). BootProgress's
-          # 512 KiB kernel PC sampling ring (bp_kern[32768][4]) pushes native __DATA past it
-          # ("No room for 0x400000 bytes in __DATA"). Shrink the ring to 8192 entries (128 KiB):
-          # the page only shows the most recent samples, so the shorter history is harmless.
-          python3 - "$ROOT" <<'PY'
-          import pathlib, sys
-          for cand in ('device/package/BootProgress.c', 'device/kits/sheng/BootProgress.c'):
-              p = pathlib.Path(sys.argv[1]) / cand
-              if p.exists():
-                  t = p.read_text()
-                  old = 'enum {BpKernSamples = 32768};'
-                  new = 'enum {BpKernSamples = 8192};'
-                  if old in t:
-                      p.write_text(t.replace(old, new))
-                      print('shrunk bp_kern ring to 8192 entries (512 KiB -> 128 KiB) in', cand)
-                  elif new in t:
-                      print('bp_kern already 8192 in', cand)
-                  break
-          else:
-              print('BootProgress.c not found under device/package or device/kits/sheng')
-          PY
-
       - name: Prepare driver source checkouts in non-cone sparse mode
         script: |
           set -euo pipefail
@@ -506,15 +358,6 @@ workflows:
           echo "cargo: $(command -v cargo) $(cargo --version 2>&1)"
           export UNIXNU_UNIQUE_CHIP_ID="9732b499"
           export GITHUB_TOKEN="${GH_TOKEN:-}"
-          # The boot-progress builder locates Font.h in the UEFI tree via UNIXNU_UEFI;
-          # without it it defaults to <device>/uefi-sheng which does not exist in CI.
-          export UNIXNU_UEFI="$ROOT/uefi-sheng"
-          test -f "$UNIXNU_UEFI/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h" && echo "Font.h present"
-          # Do NOT export XNU_NATIVE_UFS / XNU_SOURCE_CORECRYPTO14: this board builds UFS and
-          # corecrypto via board.toml archives (libShengSourceStorage.a), and exporting those
-          # vars would -force_load libShengUfs.a as well and cause "duplicate symbol" at link.
-          # Instead, relax the boot-progress gate in build-xnu-4k-baseline.sh (see the patch step):
-          # the gate's premise (UFS/corecrypto only exist when those vars are set) does not hold here.
           cd "$ROOT/device"
           set +e
           set +e
@@ -533,6 +376,19 @@ workflows:
             echo "boot.img and package.manifest.json exist; continue to artifact verification"
           fi
 
+      - name: Make no-setup Data seed (skip first-boot migration, plain framebuffer)
+        script: |
+          set -euo pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          SEED=$(find "$ROOT/UniXNU/out/sheng" -type f -name 'data.dbr' | head -1)
+          test -n "$SEED" && echo "base seed: $SEED"
+          # Reuse the upstream no-setup recipe on OUR first-install seed: remove
+          # com.apple.migration.plist (27's first-boot migration kept every core busy for
+          # 20+ minutes upstream, which matches our GPU-idle/swap=0 black screen) and force
+          # CAEnableDeepFramebuffer/Compression off, as in the recorded working boot.
+          python3 "$ROOT/device/scripts/make-nosetup-seed27.py" "$SEED" "$CM_BUILD_DIR/nosetup/data-nosetup.dbr"
+          shasum -a 256 "$CM_BUILD_DIR/nosetup/data-nosetup.dbr"
+
       - name: Collect images and Data seed
         script: |
           set -euo pipefail
@@ -545,6 +401,7 @@ workflows:
           find "$BASE" -type f \( -name 'boot.img' -o -name 'payload.img' -o -name 'kernel.macho' -o -name 'package.manifest.json' -o -name 'data.dbr' -o -name 'inputs.json' \) -exec cp {} "$OUT/" \; 2>/dev/null || true
           find "$ROOT/UniXNU/out/sheng" -type f -name 'sheng.dtb' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
+          cp "$CM_BUILD_DIR/nosetup/data-nosetup.dbr" "$OUT/" || true
           cd "$OUT"
           ls -lh
           shasum -a 256 boot.img payload.img kernel.macho data.dbr 2>/dev/null || true
