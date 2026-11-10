@@ -211,14 +211,35 @@ workflows:
       - name: Enable the on-screen boot progress diagnostic in the ipados27 config
         script: |
           set -euo pipefail
-          CFG="$CM_BUILD_DIR/pkg27/device/configs/sheng_ipados27_defconfig"
-          if grep -q '^CONFIG_XNU_BOOT_PROGRESS=' "$CFG"; then
-            echo "XNU_BOOT_PROGRESS already present"
-          else
-            printf '\n# On-screen boot progress diagnostic page (boot-progress=1/2)\nCONFIG_XNU_BOOT_PROGRESS=y\n' >> "$CFG"
-            echo "appended CONFIG_XNU_BOOT_PROGRESS=y"
-          fi
-          grep -n 'BOOT_PROGRESS' "$CFG"
+          ROOT="$CM_BUILD_DIR/pkg27"
+          CFG="$ROOT/device/configs/sheng_ipados27_defconfig"
+          # The build-xnu-4k-baseline.sh gate needs all three of these exported as 1,
+          # otherwise it aborts with "Boot progress requires the audited UFS/owner-root
+          # and source-corecrypto build". Each CONFIG_XNU_<NAME> becomes XNU_<NAME>=1.
+          for flag in CONFIG_XNU_BOOT_PROGRESS CONFIG_XNU_NATIVE_UFS CONFIG_XNU_SOURCE_CORECRYPTO14; do
+            if grep -q "^${flag}=" "$CFG"; then
+              echo "$flag already present"
+            else
+              printf '%s=y\n' "$flag" >> "$CFG"
+              echo "appended $flag=y"
+            fi
+          done
+          grep -nE 'BOOT_PROGRESS|NATIVE_UFS|CORECRYPTO14|OWNER_ROOT_AUDIT' "$CFG"
+          # The archive builder must actually run, otherwise libBootProgress.a is never made
+          # even after the gate passes. Insert it right before the final reference builder.
+          python3 - "$ROOT" <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path(sys.argv[1]) / 'device' / 'board.toml'
+          t = p.read_text()
+          if 'build-boot-progress.py' in t:
+              print('build-boot-progress.py already in archives')
+          else:
+              anchor = '"build-fileset-release-reference.py --tree . --lto"'
+              assert t.count(anchor) == 1, t.count(anchor)
+              t = t.replace(anchor, '"build-boot-progress.py", ' + anchor)
+              p.write_text(t)
+              print('inserted build-boot-progress.py before the reference builder')
+          PY
 
       - name: Prepare driver source checkouts in non-cone sparse mode
         script: |
