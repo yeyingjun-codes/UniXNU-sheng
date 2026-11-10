@@ -282,6 +282,36 @@ workflows:
           else:
               print('archive command not matched; check the ar invocation manually')
           PY
+          # LegacyDisplaySupport27.o defines weak placeholder implementations of the five
+          # boot_progress_* symbols (for builds without the diagnostic page). Now that the real
+          # BootProgress.o is linked, those strong duplicates collide. Mark the placeholders weak
+          # so the real BootProgress.o definitions win.
+          python3 - "$ROOT" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1]) / 'device' / 'scripts' / 'build-gop-legacy-display-27.py'
+          t = p.read_text()
+          repls = [
+            ('extern "C" {char boot_progress_ext[8][48];}',
+             'extern "C" {__attribute__((weak)) char boot_progress_ext[8][48];}'),
+            ('extern "C" int boot_progress_prepare_scanout(void) {return 1;}',
+             'extern "C" __attribute__((weak)) int boot_progress_prepare_scanout(void) {return 1;}'),
+            ('extern "C" void boot_progress_cancel_scanout(void) {}',
+             'extern "C" __attribute__((weak)) void boot_progress_cancel_scanout(void) {}'),
+            ('extern "C" void boot_progress_stage(const char *) {}',
+             'extern "C" __attribute__((weak)) void boot_progress_stage(const char *) {}'),
+            ('extern "C" int boot_progress_pulse_anchor(uintptr_t,uint64_t,unsigned,unsigned,unsigned) {return 0;}',
+             'extern "C" __attribute__((weak)) int boot_progress_pulse_anchor(uintptr_t,uint64_t,unsigned,unsigned,unsigned) {return 0;}'),
+          ]
+          n = 0
+          for old, new in repls:
+              if old in t and '__attribute__((weak))' not in old:
+                  t = t.replace(old, new); n += 1
+          if n:
+              p.write_text(t)
+              print('marked %d boot_progress placeholders weak in LegacyDisplaySupport27' % n)
+          else:
+              print('placeholders already weak or not found')
+          PY
 
       - name: Prepare driver source checkouts in non-cone sparse mode
         script: |
