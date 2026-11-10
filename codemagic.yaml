@@ -264,6 +264,24 @@ workflows:
           else:
               print('gate text not found in the pinned script copy (may live in the build tree)')
           PY
+          # libBootProgress.a must only carry the objects that are unique to the diagnostic page.
+          # BootWatchdogPolicy.o / AdspFirmware.o / BootDiagExport.o / BootLatencyTrace.o are already
+          # present in libShengSourceStorage.a / libNativeLegacyDisplay.late.a, so archiving them
+          # again here causes "duplicate symbol" at link. Keep only BootProgress.o + BootFaultProbe.o.
+          python3 - "$ROOT" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1]) / 'device' / 'scripts' / 'build-boot-progress.py'
+          t = p.read_text()
+          old = "str(archive), str(obj), str(fault_obj), str(policy_obj), str(diag_obj), str(latency_obj), str(fw_obj)"
+          new = "str(archive), str(obj), str(fault_obj)"
+          if old in t:
+              p.write_text(t.replace(old, new))
+              print('trimmed libBootProgress.a to BootProgress.o + BootFaultProbe.o (drop duplicated helper objects)')
+          elif new in t:
+              print('archive already trimmed')
+          else:
+              print('archive command not matched; check the ar invocation manually')
+          PY
 
       - name: Prepare driver source checkouts in non-cone sparse mode
         script: |
