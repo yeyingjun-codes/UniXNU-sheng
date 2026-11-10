@@ -312,10 +312,10 @@ workflows:
           else:
               print('placeholders already weak or not found')
           PY
-          # Prelink layout: native __DATA was pinned to the original kernel __DATA address,
-          # which only fits while the native __DATA is no larger than the original. BootProgress
-          # grows it past the gap before the next retained kext. Place it with hole() instead,
-          # so the layout picks a free range inside the __DATA collection mapping.
+          # Prelink layout: keep the original fixed __DATA placement. The __DATA root mapping is
+          # fragmented by retained kexts, so hole() fails with "No room for 3.6 MB". The original
+          # kernel address leaves the largest contiguous tail gap, which fits once the sampling
+          # ring is shrunk (native __DATA 3.6 MB vs the 4 MB budget).
           python3 - "$ROOT" <<'PY'
           import pathlib, sys
           p = pathlib.Path(sys.argv[1]) / 'UniXNU' / 'kits' / 'XnuPrelink' / 'fileset_layout.py'
@@ -323,16 +323,14 @@ workflows:
               print('fileset_layout.py not at the pinned path; skipping')
           else:
               t = p.read_text()
-              # keep the original fixed placement: the __DATA root mapping is fragmented by
-              # retained kexts, so hole() fails with "No room for 3.6 MB". The original kernel
-              # address leaves the largest contiguous tail gap, which fits once the sampling
-              # ring is shrunk (native __DATA 3.6 MB vs the 4 MB budget).
-              pass
-              if old in t:
-                  p.write_text(t.replace(old, new))
-                  print('prelink: native __DATA now placed via hole() (fits BootProgress growth)')
-              elif new in t:
-                  print('prelink: __DATA already uses hole()')
+              # undo any previous hole() rewrite and restore the fixed placement
+              hole_line = "self.reserve('__DATA', self.hole('__DATA', self.segment('__DATA')['size']))"
+              fixed_line = "self.reserve('__DATA', self.roots['__DATA']['va'])"
+              if hole_line in t:
+                  p.write_text(t.replace(hole_line, fixed_line))
+                  print('prelink: restored the fixed __DATA placement (hole() rolled back)')
+              elif fixed_line in t:
+                  print('prelink: fixed __DATA placement already in place')
               else:
                   print('prelink: __DATA reserve line not found; check fileset_layout.py')
           PY
