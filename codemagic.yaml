@@ -333,6 +333,27 @@ workflows:
               else:
                   print('prelink: __DATA reserve line not found; check fileset_layout.py')
           PY
+          # The prelink __DATA collection mapping is a fixed budget (0x400000). BootProgress's
+          # 512 KiB kernel PC sampling ring (bp_kern[32768][4]) pushes native __DATA past it
+          # ("No room for 0x400000 bytes in __DATA"). Shrink the ring to 8192 entries (128 KiB):
+          # the page only shows the most recent samples, so the shorter history is harmless.
+          python3 - "$ROOT" <<'PY'
+          import pathlib, sys
+          for cand in ('device/package/BootProgress.c', 'device/kits/sheng/BootProgress.c'):
+              p = pathlib.Path(sys.argv[1]) / cand
+              if p.exists():
+                  t = p.read_text()
+                  old = 'enum {BpKernSamples = 32768};'
+                  new = 'enum {BpKernSamples = 8192};'
+                  if old in t:
+                      p.write_text(t.replace(old, new))
+                      print('shrunk bp_kern ring to 8192 entries (512 KiB -> 128 KiB) in', cand)
+                  elif new in t:
+                      print('bp_kern already 8192 in', cand)
+                  break
+          else:
+              print('BootProgress.c not found under device/package or device/kits/sheng')
+          PY
 
       - name: Prepare driver source checkouts in non-cone sparse mode
         script: |
