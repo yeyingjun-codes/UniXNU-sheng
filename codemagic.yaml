@@ -387,6 +387,23 @@ workflows:
             echo "boot.img and package.manifest.json exist; continue to artifact verification"
           fi
 
+      - name: Build userdata-root image (SHNGROOT manifest + OS/SystemOS windows)
+        script: |
+          set -o pipefail
+          ROOT="$CM_BUILD_DIR/pkg27"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$(brew --prefix llvm)/bin:$PATH"
+          export UNIXNU_UNIQUE_CHIP_ID="9732b499"
+          export GITHUB_TOKEN="${GH_TOKEN:-}"
+          cd "$ROOT/device"
+          python3 "$ROOT/UniXNU/unixnu" build userdata --os 27 -D "$ROOT/device" 2>&1 | tee "$CM_BUILD_DIR/userdata27.log"
+          IMG=$(find "$ROOT/UniXNU/out/sheng" -type f -name 'userdata-root.img' | head -1)
+          test -n "$IMG" || { echo "FATAL: userdata-root.img not found"; exit 1; }
+          mkdir -p "$CM_BUILD_DIR/out27"
+          cp "$IMG" "$CM_BUILD_DIR/out27/"
+          cp "${IMG%.img}.json" "$CM_BUILD_DIR/out27/" 2>/dev/null || true
+          shasum -a 256 "$IMG"
+          head -c 16 "$IMG" | xxd
+
       - name: Make no-setup Data seed (skip first-boot migration, plain framebuffer)
         script: |
           set -euo pipefail
@@ -414,10 +431,12 @@ workflows:
           find "$ROOT/UniXNU/out/sheng" -type f -name 'sheng.dtb' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
           cp "$CM_BUILD_DIR/nosetup/data-nosetup.dbr" "$OUT/" || true
+          USERDATA_IMG=$(find "$ROOT/UniXNU/out/sheng" -type f -name 'userdata-root.img' | head -1)
+          [ -n "$USERDATA_IMG" ] && cp "$USERDATA_IMG" "$OUT/" || echo "MISSING userdata-root.img"
           cd "$OUT"
           ls -lh
           shasum -a 256 boot.img payload.img kernel.macho data.dbr 2>/dev/null || true
-          for f in boot.img payload.img data.dbr package.manifest.json; do
+          for f in boot.img payload.img data.dbr package.manifest.json userdata-root.img; do
             [ -f "$f" ] || echo "MISSING $f"
           done
 
