@@ -386,6 +386,7 @@ workflows:
           # com.apple.migration.plist (27's first-boot migration kept every core busy for
           # 20+ minutes upstream, which matches our GPU-idle/swap=0 black screen) and force
           # CAEnableDeepFramebuffer/Compression off, as in the recorded working boot.
+          export PYTHONPATH="$ROOT/UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/tree/drivers/DarwinBoot/Test:${PYTHONPATH:-}"
           python3 "$ROOT/device/scripts/make-nosetup-seed27.py" "$SEED" "$CM_BUILD_DIR/nosetup/data-nosetup.dbr"
           shasum -a 256 "$CM_BUILD_DIR/nosetup/data-nosetup.dbr"
 
