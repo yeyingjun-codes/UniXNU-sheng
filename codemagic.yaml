@@ -236,7 +236,14 @@ workflows:
                           cmd += ["--branch", src["ref"]]
                       cmd += [src["url"], str(dest)]
                       print("clone", name, src.get("ref"), src["url"])
-                      subprocess.run(cmd, check=True)
+                      import time as _t
+                      for attempt in range(4):
+                          try:
+                              subprocess.run(cmd, check=True)
+                              break
+                          except subprocess.CalledProcessError:
+                              print(f"clone failed, retry {attempt+1}/4")
+                              _t.sleep(15)
                   subprocess.run(["git", "-C", str(dest), "config", "core.sparseCheckoutCone", "false"], check=True)
                   subprocess.run(["git", "-C", str(dest), "sparse-checkout", "set", "--no-cone", *src["paths"]], check=True)
                   head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"],
