@@ -73,6 +73,7 @@ wifi_tool = "scripts/build-wifi-userspace.py"
 wifi_target = "ios27"
 wifi_launchd_cache = true
 wifi_bin_prefix = "wifi-bin"
+appsync = true
 
 ["payload"."install"]
 "title" = "Install and boot"
