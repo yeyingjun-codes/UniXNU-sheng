@@ -9,5 +9,3 @@ zzzzzzzz-sheng-exit-latency.patch
 zzzzzzzzz-sheng-unnest-trace.patch
 sheng-wifi-launchd-cache.patch
 sheng-wifi-association-event.patch
-sheng-appsync-runtime.patch
-sheng-appsync-user-trust.patch
