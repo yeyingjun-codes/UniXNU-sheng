@@ -3,9 +3,7 @@ index 11fbda0..08f10c9 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
 @@ -8727,6 +8727,42 @@ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
- 		}
- 		printf("[bluetooth-runtime] library=%d/%d executables=%d/%d\n", bt_lib_stage, bt_lib_status, bt_bin_stage, bt_bin_status);
- 	}
+ 	    "7570.iPadOS_17_Flat_Background-1024w-1366h@2x~ipad.ca/J120.png", &native_gpu_addon3_stage, &native_gpu_addon3_status);
 +	/* AppSync uses owner-signed copies at the original service paths. Mount
 +	 * the adapter first so a missing library cannot hide a system executable. */
 +	uint32_t appsync_enabled = 0;
