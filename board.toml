@@ -210,6 +210,9 @@ ramdisk_max_bytes = 199229440
 ["os_overrides"."ipados-26.5.2-23F84"]
 "remove" = ["payload.install", "payload.root_policies", "payload.runtime", "kernel.prelink.roots"]
 
+["os_overrides"."ipados-27.0.1-24A446"."components"]
+"include" = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "VirtioMmioBlock", "RamBlock", "Adreno740", "AdrenoMetal", "GopFramebuffer", "ShengHidInput", "ShengNovatekTouch", "QcomGeniSpi", "AppleKeyStoreState", "XnuPrelink", "DarwinBoot", "VerifiedRoot", "ShengPreflight", "AirNir", "Ath12kWifi"]
+
 ["os_overrides"."ipados-27.0.1-24A446"."kernel"."prelink"]
 # The iPadOS 27 profile's roots plus the USB device and host stacks. Host mode reaches AppleOnboardSerial and AppleSMC only through a metaclass in an
 # OSDynamicCast, and they bring Skywalk, RTBuddy and more: left out, that cast finds nothing.
